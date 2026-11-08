@@ -12,7 +12,7 @@
 
 ## Remaining security work
 
-- Android pairing, pinned TLS, Keystore-backed token restore, and daemon reconnect were exercised on an Android 16 emulator. Physical Poco M5 and additional API/OEM combinations remain untested. Manual address and certificate entry is used; there is no QR flow yet.
+- Android pairing, pinned TLS, Keystore-backed token restore, and daemon reconnect were exercised on an Android 16 emulator. The terminal QR generator and Android Google Play services scanner are implemented; Android validates HTTPS, a private IPv4 endpoint, the certificate fingerprint, the short-lived pairing code, and its expiry before filling the pairing form. End-to-end camera scanning on a Google Play-enabled physical device, the Poco M5, and additional API/OEM combinations remain untested.
 - LAN binding and firewall exposure require deliberate operator configuration. No port discovery, LAN service advertisement, or firewall changes are performed by the installer.
 - A formal security review, fuzzing of the network parser, and validation on multiple Android API levels are still needed.
 - Power and monitor operations are available only to paired devices, but their execution has not been tested on the live desktop. Lock, systemctl power commands, wpctl, playerctl, and DPMS availability depend on the user's session installation. Server-side policy currently validates authentication and allowlisted values; confirmation is a client UI behavior.
@@ -39,5 +39,11 @@ Security checks exercised in the current Rust test and loopback runs include exp
 - `systemd-analyze verify systemd/waycontrol.service` parsed the unit but reported its configured `%h/.local/bin/waycontrold` executable is absent because the service has not been installed. The service itself was not started under systemd.
 - LAN binding is opt-in and must be paired with host firewall rules for a trusted network. The project does not configure firewall policy.
 - `PROGRESS.md` records the complete test evidence, measured runtime data, and product work that remains before v0.1 acceptance.
+
+## Review performed (2026-11-08)
+
+A focused source review covered QR pairing generation/decoding, pairing endpoint validation, certificate pinning, and the CI workflow. The QR expiry calculation previously used unchecked `Long` subtraction. An attacker-controlled QR timestamp could overflow that subtraction and appear to be within the allowed lifetime. Android now uses checked subtraction and rejects overflow; a regression test reproduced the old behavior and passes with the fix. This bypassed only the client's expiry check: the QR contains no device credential, and the daemon still validates the live pairing code and requires local approval.
+
+This was a focused review, not a full-project security assessment. Dependency advisory scanning, dedicated secret scanning, live device QR scanning, and hostile-network testing remain outstanding.
 
 Report suspected vulnerabilities through the project maintainer. Do not expose a LAN-bound service on an untrusted network.
