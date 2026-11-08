@@ -49,7 +49,11 @@ internal object PairingQrPayload {
         require(code.matches(Regex("[0-9]{6}"))) { "Pairing QR code is invalid" }
 
         val expiresAt = value.optLong("expires_at_unix", -1)
-        val remaining = expiresAt - nowEpochSeconds
+        val remaining = try {
+            Math.subtractExact(expiresAt, nowEpochSeconds)
+        } catch (_: ArithmeticException) {
+            -1L
+        }
         require(remaining in 1..MAX_CODE_LIFETIME_SECONDS) { "Pairing QR has expired; scan a fresh code" }
 
         return PairingQrDetails(endpoint, CertificatePin.canonicalize(fingerprint), code, expiresAt)
