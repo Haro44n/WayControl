@@ -35,4 +35,13 @@ class PairingQrPayloadTest {
             PairingQrPayload.decode("not-json", nowEpochSeconds = 100)
         }
     }
+
+    @Test
+    fun rejectsExpiryTimestampThatWouldOverflowWhenSubtracted() {
+        val payload = """{"version":1,"endpoint":"https://192.168.1.20:8765","fingerprint":"${"a".repeat(64)}","code":"042381","expires_at_unix":${Long.MIN_VALUE}}"""
+
+        assertThrows(IllegalArgumentException::class.java) {
+            PairingQrPayload.decode(payload, nowEpochSeconds = Long.MAX_VALUE)
+        }
+    }
 }
