@@ -1,0 +1,35 @@
+name: Rust
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install session bus for KWin adapter tests
+        run: sudo apt-get update && sudo apt-get install -y dbus-daemon
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: dbus-run-session -- cargo test --workspace
+      - run: cargo build --workspace --release
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - run: sdkmanager "platforms;android-37" "build-tools;36.0.0"
+      - run: ./gradlew testDebugUnitTest lintDebug assembleDebug assembleRelease
+        working-directory: android

@@ -1,0 +1,13 @@
+[package]
+name = "waycontrol-backend-hyprland"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+waycontrol-core = { path = "../waycontrol-core" }
+waycontrol-hyprland = { path = "../waycontrol-hyprland" }
+waycontrol-compositor = { path = "../waycontrol-compositor" }
+tokio.workspace = true

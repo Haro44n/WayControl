@@ -1,0 +1,13 @@
+[package]
+name = "waycontrol-backend-sway"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+waycontrol-core = { path = "../waycontrol-core" }
+waycontrol-compositor = { path = "../waycontrol-compositor" }

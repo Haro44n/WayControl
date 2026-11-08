@@ -1,0 +1,573 @@
+//! Sway IPC adapter. It represents Sway container IDs as opaque `sway:<id>` IDs.
+
+use async_trait::async_trait;
+use serde_json::{Value, json};
+use std::{env, path::PathBuf};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{UnixStream, unix::OwnedReadHalf},
+};
+use waycontrol_compositor::{
+    CompositorBackend, CompositorCapabilities, CompositorInfo, CompositorKind,
+};
+use waycontrol_core::{Monitor, Window, Workspace, WorkspaceId};
+
+const MAGIC: &[u8; 6] = b"i3-ipc";
+const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_EVENT_PAYLOAD_BYTES: usize = 7 * 1024;
+const GET_WORKSPACES: u32 = 1;
+const SUBSCRIBE: u32 = 2;
+const GET_OUTPUTS: u32 = 3;
+const GET_TREE: u32 = 4;
+const RUN_COMMAND: u32 = 0;
+
+#[derive(Clone, Debug)]
+pub struct SwayAdapter {
+    socket: Option<PathBuf>,
+}
+
+impl SwayAdapter {
+    pub fn from_env() -> Result<Self, String> {
+        let socket = env::var_os("SWAYSOCK")
+            .map(PathBuf::from)
+            .ok_or_else(|| "SWAYSOCK is not set".to_owned())?;
+        Ok(Self {
+            socket: Some(socket),
+        })
+    }
+
+    pub fn from_env_or_unavailable() -> Self {
+        Self::from_env().unwrap_or(Self { socket: None })
+    }
+
+    pub async fn connect_to(socket: impl Into<PathBuf>) -> Result<Self, String> {
+        let adapter = Self {
+            socket: Some(socket.into()),
+        };
+        adapter.request(GET_WORKSPACES, &[]).await?;
+        Ok(adapter)
+    }
+
+    async fn connection(&self) -> Result<UnixStream, String> {
+        let path = self
+            .socket
+            .as_ref()
+            .ok_or_else(|| "SWAYSOCK is unavailable".to_owned())?;
+        UnixStream::connect(path)
+            .await
+            .map_err(|error| format!("could not connect to Sway IPC socket: {error}"))
+    }
+
+    async fn request(&self, kind: u32, payload: &[u8]) -> Result<Value, String> {
+        let mut stream = self.connection().await?;
+        send_frame(&mut stream, kind, payload).await?;
+        let (response_type, bytes) = read_frame(&mut stream).await?;
+        if response_type != kind {
+            return Err(format!(
+                "unexpected Sway IPC reply type {response_type} for request {kind}"
+            ));
+        }
+        serde_json::from_slice(&bytes).map_err(|error| format!("invalid Sway IPC JSON: {error}"))
+    }
+
+    async fn command(&self, command: String) -> Result<(), String> {
+        let result = self.request(RUN_COMMAND, command.as_bytes()).await?;
+        let entries = result
+            .as_array()
+            .ok_or_else(|| "invalid Sway command response".to_owned())?;
+        if !entries.is_empty()
+            && entries
+                .iter()
+                .all(|entry| entry.get("success").and_then(Value::as_bool) == Some(true))
+        {
+            Ok(())
+        } else {
+            Err(entries
+                .iter()
+                .filter_map(|entry| entry.get("error").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("; "))
+        }
+    }
+
+    async fn workspace_values(&self) -> Result<Vec<Workspace>, String> {
+        let values = self.request(GET_WORKSPACES, &[]).await?;
+        let values = values
+            .as_array()
+            .ok_or_else(|| "invalid Sway workspace response".to_owned())?;
+        let mut workspaces = values
+            .iter()
+            .filter_map(|item| {
+                let name = item.get("name")?.as_str()?.to_owned();
+                Some(Workspace {
+                    id: WorkspaceId::from(name.as_str()),
+                    name,
+                    monitor: item
+                        .get("output")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    window_count: 0,
+                    active: item
+                        .get("focused")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                })
+            })
+            .collect::<Vec<_>>();
+        for window in self.window_values().await? {
+            if let Some(id) = window.workspace_id.as_ref() {
+                if let Some(workspace) = workspaces.iter_mut().find(|item| &item.id == id) {
+                    workspace.window_count += 1;
+                }
+            }
+        }
+        Ok(workspaces)
+    }
+
+    async fn window_values(&self) -> Result<Vec<Window>, String> {
+        let tree = self.request(GET_TREE, &[]).await?;
+        if !tree.is_object() {
+            return Err("invalid Sway tree response".into());
+        }
+        let mut windows = Vec::new();
+        collect_windows(&tree, None, None, false, &mut windows);
+        Ok(windows)
+    }
+
+    fn id(&self, id: &str) -> Result<u64, String> {
+        id.strip_prefix("sway:")
+            .and_then(|rest| rest.parse::<u64>().ok())
+            .filter(|id| *id > 0)
+            .ok_or_else(|| "invalid Sway container ID".to_owned())
+    }
+
+    fn quote(value: &str) -> Result<String, String> {
+        if value.is_empty() || value.len() > 128 || value.chars().any(char::is_control) {
+            return Err("invalid Sway workspace name".into());
+        }
+        Ok(format!(
+            "\"{}\"",
+            value.replace('\\', "\\\\").replace('"', "\\\"")
+        ))
+    }
+}
+
+fn collect_windows(
+    node: &Value,
+    workspace: Option<&str>,
+    monitor: Option<&str>,
+    floating: bool,
+    out: &mut Vec<Window>,
+) {
+    let kind = node.get("type").and_then(Value::as_str).unwrap_or_default();
+    let workspace = if kind == "workspace" {
+        node.get("name").and_then(Value::as_str).or(workspace)
+    } else {
+        workspace
+    };
+    let monitor = if kind == "workspace" {
+        node.get("output").and_then(Value::as_str).or(monitor)
+    } else {
+        monitor
+    };
+    let app_id = node.get("app_id").and_then(Value::as_str).or_else(|| {
+        node.get("window_properties")
+            .and_then(|value| value.get("class"))
+            .and_then(Value::as_str)
+    });
+    if kind == "con" && app_id.is_some() {
+        if let (Some(id), Some(app_id)) = (node.get("id").and_then(Value::as_u64), app_id) {
+            out.push(Window {
+                address: format!("sway:{id}"),
+                title: node
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                app_id: app_id.to_owned(),
+                workspace_id: workspace.map(WorkspaceId::from),
+                monitor: monitor.map(str::to_owned),
+                floating,
+                fullscreen: node
+                    .get("fullscreen_mode")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0)
+                    != 0,
+                focused: node
+                    .get("focused")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            });
+        }
+    }
+    if let Some(children) = node.get("nodes").and_then(Value::as_array) {
+        for child in children {
+            collect_windows(child, workspace, monitor, floating, out);
+        }
+    }
+    if let Some(children) = node.get("floating_nodes").and_then(Value::as_array) {
+        for child in children {
+            collect_windows(child, workspace, monitor, true, out);
+        }
+    }
+}
+
+async fn send_frame(stream: &mut UnixStream, kind: u32, payload: &[u8]) -> Result<(), String> {
+    if payload.len() > MAX_MESSAGE_BYTES {
+        return Err("Sway IPC request exceeds size limit".into());
+    }
+    stream.write_all(MAGIC).await.map_err(|e| e.to_string())?;
+    stream
+        .write_all(&(payload.len() as u32).to_le_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
+    stream
+        .write_all(&kind.to_le_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
+    stream.write_all(payload).await.map_err(|e| e.to_string())
+}
+
+async fn read_frame(stream: &mut UnixStream) -> Result<(u32, Vec<u8>), String> {
+    let mut header = [0_u8; 14];
+    stream
+        .read_exact(&mut header)
+        .await
+        .map_err(|e| e.to_string())?;
+    if &header[..6] != MAGIC {
+        return Err("invalid Sway IPC magic".into());
+    }
+    let len = u32::from_le_bytes(header[6..10].try_into().expect("fixed header")) as usize;
+    if len > MAX_MESSAGE_BYTES {
+        return Err("Sway IPC response exceeds size limit".into());
+    }
+    let kind = u32::from_le_bytes(header[10..14].try_into().expect("fixed header"));
+    let mut payload = vec![0; len];
+    stream
+        .read_exact(&mut payload)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok((kind, payload))
+}
+
+async fn forward_events(mut reader: OwnedReadHalf, mut writer: UnixStream) {
+    loop {
+        let Ok((kind, payload)) = read_frame_half(&mut reader).await else {
+            break;
+        };
+        let event = json!({"type":kind, "payload":serde_json::from_slice::<Value>(&payload).unwrap_or(Value::Null)});
+        let Ok(mut line) = serde_json::to_vec(&event) else {
+            break;
+        };
+        if line.len() >= 8192 {
+            break;
+        }
+        line.push(b'\n');
+        if writer.write_all(&line).await.is_err() {
+            break;
+        }
+    }
+}
+
+async fn read_frame_half(reader: &mut OwnedReadHalf) -> Result<(u32, Vec<u8>), String> {
+    let mut header = [0_u8; 14];
+    reader
+        .read_exact(&mut header)
+        .await
+        .map_err(|e| e.to_string())?;
+    if &header[..6] != MAGIC {
+        return Err("invalid Sway IPC event magic".into());
+    }
+    let len = u32::from_le_bytes(header[6..10].try_into().expect("fixed header")) as usize;
+    if len > MAX_EVENT_PAYLOAD_BYTES {
+        return Err("Sway IPC event exceeds the bounded forwarding limit".into());
+    }
+    let kind = u32::from_le_bytes(header[10..14].try_into().expect("fixed header"));
+    let mut payload = vec![0; len];
+    reader
+        .read_exact(&mut payload)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok((kind, payload))
+}
+
+#[async_trait]
+impl CompositorBackend for SwayAdapter {
+    fn info(&self) -> CompositorInfo {
+        CompositorInfo::detected(CompositorKind::Sway)
+    }
+    fn capabilities(&self) -> CompositorCapabilities {
+        CompositorCapabilities {
+            workspaces: true,
+            switch_workspace: true,
+            windows: true,
+            focus_window: true,
+            move_window: true,
+            toggle_floating: true,
+            toggle_fullscreen: true,
+            close_window: true,
+            monitors: true,
+            monitor_power: false,
+            events: true,
+            lock_screen: false,
+        }
+    }
+    async fn workspaces(&self) -> Result<Vec<Workspace>, String> {
+        self.workspace_values().await
+    }
+    async fn windows(&self) -> Result<Vec<Window>, String> {
+        self.window_values().await
+    }
+    async fn switch_workspace(&self, id: &WorkspaceId) -> Result<(), String> {
+        self.command(format!("workspace {}", Self::quote(id.as_str())?))
+            .await
+    }
+    async fn focus_window(&self, id: &str) -> Result<(), String> {
+        self.command(format!("[con_id={}] focus", self.id(id)?))
+            .await
+    }
+    async fn move_window(&self, id: &str, workspace_id: &WorkspaceId) -> Result<(), String> {
+        self.command(format!(
+            "[con_id={}] move container to workspace {}",
+            self.id(id)?,
+            Self::quote(workspace_id.as_str())?
+        ))
+        .await
+    }
+    async fn toggle_floating(&self, id: &str) -> Result<(), String> {
+        self.command(format!("[con_id={}] floating toggle", self.id(id)?))
+            .await
+    }
+    async fn toggle_fullscreen(&self, id: &str) -> Result<(), String> {
+        self.command(format!("[con_id={}] fullscreen toggle", self.id(id)?))
+            .await
+    }
+    async fn close_window(&self, id: &str) -> Result<(), String> {
+        self.command(format!("[con_id={}] kill", self.id(id)?))
+            .await
+    }
+    async fn monitors(&self) -> Result<Vec<Monitor>, String> {
+        let outputs = self.request(GET_OUTPUTS, &[]).await?;
+        outputs
+            .as_array()
+            .ok_or_else(|| "invalid Sway output response".to_owned())
+            .map(|outputs| {
+                outputs
+                    .iter()
+                    .filter_map(|output| {
+                        Some(Monitor {
+                            name: output.get("name")?.as_str()?.to_owned(),
+                            dpms_enabled: None,
+                        })
+                    })
+                    .collect()
+            })
+    }
+    async fn set_monitor_power(&self, _name: &str, _enabled: bool) -> Result<(), String> {
+        Err("Sway monitor power control is not supported by this adapter".into())
+    }
+    async fn lock_screen(&self) -> Result<(), String> {
+        Err("Sway lock screen is not supported by this adapter".into())
+    }
+    async fn event_stream(&self) -> Result<UnixStream, String> {
+        let mut stream = self.connection().await?;
+        send_frame(
+            &mut stream,
+            SUBSCRIBE,
+            br#"["workspace","window","output","shutdown"]"#,
+        )
+        .await?;
+        let (response_type, response) = read_frame(&mut stream).await?;
+        if response_type != SUBSCRIBE {
+            return Err(format!(
+                "unexpected Sway subscription reply type {response_type}"
+            ));
+        }
+        let response: Value = serde_json::from_slice(&response).map_err(|e| e.to_string())?;
+        if response.get("success").and_then(Value::as_bool) != Some(true) {
+            return Err("Sway rejected event subscription".into());
+        }
+        let (reader, _) = stream.into_split();
+        let (client, producer) = UnixStream::pair().map_err(|e| e.to_string())?;
+        tokio::spawn(forward_events(reader, producer));
+        Ok(client)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use tokio::{
+        io::{AsyncBufReadExt, BufReader},
+        net::UnixListener,
+    };
+
+    static NEXT_SOCKET: AtomicU64 = AtomicU64::new(0);
+
+    async fn mock_socket() -> (PathBuf, UnixListener) {
+        let path = std::env::temp_dir().join(format!(
+            "waycontrol-sway-{}-{}.sock",
+            std::process::id(),
+            NEXT_SOCKET.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_file(&path);
+        let listener = UnixListener::bind(&path).unwrap();
+        (path, listener)
+    }
+
+    async fn receive_request(stream: &mut UnixStream) -> (u32, Vec<u8>) {
+        let mut header = [0_u8; 14];
+        stream.read_exact(&mut header).await.unwrap();
+        assert_eq!(&header[..6], MAGIC);
+        let len = u32::from_le_bytes(header[6..10].try_into().unwrap()) as usize;
+        let kind = u32::from_le_bytes(header[10..14].try_into().unwrap());
+        let mut payload = vec![0; len];
+        stream.read_exact(&mut payload).await.unwrap();
+        (kind, payload)
+    }
+
+    async fn reply(stream: &mut UnixStream, kind: u32, body: &[u8]) {
+        send_frame(stream, kind, body).await.unwrap();
+    }
+
+    #[test]
+    fn workspace_names_are_quoted_and_container_ids_are_strict() {
+        assert_eq!(SwayAdapter::quote("3: web").unwrap(), "\"3: web\"");
+        assert!(SwayAdapter::quote("bad\nname").is_err());
+        let adapter = SwayAdapter { socket: None };
+        assert_eq!(adapter.id("sway:42").unwrap(), 42);
+        assert!(adapter.id("sway:42;kill").is_err());
+    }
+
+    #[test]
+    fn workspace_tree_model_keeps_named_workspace_ids() {
+        let tree: Value = serde_json::from_str(r#"{"type":"workspace","name":"3: web","nodes":[{"id":42,"type":"con","app_id":"firefox","name":"Browser","focused":true,"fullscreen_mode":1,"nodes":[],"floating_nodes":[]}] ,"floating_nodes":[]}"#).unwrap();
+        let mut windows = Vec::new();
+        collect_windows(&tree, None, None, false, &mut windows);
+        assert_eq!(windows[0].workspace_id.as_ref().unwrap().as_str(), "3: web");
+        assert_eq!(windows[0].address, "sway:42");
+        assert!(windows[0].focused && windows[0].fullscreen);
+    }
+
+    #[tokio::test]
+    async fn ipc_workspace_query_preserves_names_and_counts_windows() {
+        let (path, listener) = mock_socket().await;
+        let peer = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            assert_eq!(receive_request(&mut stream).await.0, GET_WORKSPACES);
+            reply(
+                &mut stream,
+                GET_WORKSPACES,
+                br#"[{"name":"3: web","output":"DP-1","focused":true}]"#,
+            )
+            .await;
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (kind, _) = receive_request(&mut stream).await;
+            assert_eq!(kind, GET_TREE);
+            reply(&mut stream, GET_TREE, br#"{"type":"workspace","name":"3: web","nodes":[{"id":42,"type":"con","app_id":"firefox","name":"Browser","nodes":[],"floating_nodes":[]}],"floating_nodes":[]}"#).await;
+        });
+        let adapter = SwayAdapter {
+            socket: Some(path.clone()),
+        };
+        let workspaces = adapter.workspaces().await.unwrap();
+        assert_eq!(workspaces[0].id.as_str(), "3: web");
+        assert_eq!(workspaces[0].window_count, 1);
+        assert!(workspaces[0].active);
+        peer.await.unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn switch_workspace_sends_one_quoted_sway_command() {
+        let (path, listener) = mock_socket().await;
+        let peer = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (kind, payload) = receive_request(&mut stream).await;
+            assert_eq!(kind, RUN_COMMAND);
+            assert_eq!(payload, br#"workspace "3: web""#);
+            reply(&mut stream, RUN_COMMAND, br#"[{"success":true}]"#).await;
+        });
+        let adapter = SwayAdapter {
+            socket: Some(path.clone()),
+        };
+        adapter
+            .switch_workspace(&WorkspaceId::from("3: web"))
+            .await
+            .unwrap();
+        peer.await.unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn event_subscription_forwards_bounded_json_lines() {
+        let (path, listener) = mock_socket().await;
+        let peer = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (kind, payload) = receive_request(&mut stream).await;
+            assert_eq!(kind, SUBSCRIBE);
+            assert_eq!(payload, br#"["workspace","window","output","shutdown"]"#);
+            reply(&mut stream, SUBSCRIBE, br#"{"success":true}"#).await;
+            send_frame(
+                &mut stream,
+                0x8000_0000,
+                br#"{"change":"focus","current":{"name":"3: web"}}"#,
+            )
+            .await
+            .unwrap();
+        });
+        let adapter = SwayAdapter {
+            socket: Some(path.clone()),
+        };
+        let client = adapter.event_stream().await.unwrap();
+        let mut reader = BufReader::new(client);
+        let mut line = String::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            reader.read_line(&mut line),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let event: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(event["type"], 0x8000_0000_u64);
+        assert_eq!(event["payload"]["change"], "focus");
+        peer.await.unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn window_actions_send_only_validated_container_commands() {
+        let (path, listener) = mock_socket().await;
+        let peer = tokio::spawn(async move {
+            let expected = [
+                "[con_id=42] focus",
+                "[con_id=42] move container to workspace \"3: web\"",
+                "[con_id=42] floating toggle",
+                "[con_id=42] fullscreen toggle",
+                "[con_id=42] kill",
+            ];
+            for command in expected {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let (kind, payload) = receive_request(&mut stream).await;
+                assert_eq!(kind, RUN_COMMAND);
+                assert_eq!(payload, command.as_bytes());
+                reply(&mut stream, RUN_COMMAND, br#"[{"success":true}]"#).await;
+            }
+        });
+        let adapter = SwayAdapter {
+            socket: Some(path.clone()),
+        };
+        adapter.focus_window("sway:42").await.unwrap();
+        adapter
+            .move_window("sway:42", &WorkspaceId::from("3: web"))
+            .await
+            .unwrap();
+        adapter.toggle_floating("sway:42").await.unwrap();
+        adapter.toggle_fullscreen("sway:42").await.unwrap();
+        adapter.close_window("sway:42").await.unwrap();
+        peer.await.unwrap();
+        assert!(adapter.focus_window("sway:42; kill").await.is_err());
+        std::fs::remove_file(path).unwrap();
+    }
+}
