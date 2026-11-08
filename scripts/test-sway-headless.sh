@@ -50,4 +50,4 @@ fi
 swaymsg -t get_outputs >/dev/null
 swaymsg exec 'xterm -title WayControlLiveTest -e sh -c "sleep 300"'
 WAYCONTROL_TEST_LIVE_SWAY=1 cargo test -p waycontrol-backend-sway \
-    live_sway_supports_workspace_window_monitor_and_event_operations -- --ignored --exact --nocapture
+    live_sway_supports_workspace_window_monitor_and_event_operations -- --ignored --nocapture
