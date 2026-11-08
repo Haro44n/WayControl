@@ -198,6 +198,19 @@ def main():
             ), "storage telemetry contains invalid mount data"
             assert any(item["mount_point"] == "/" for item in storage), "root filesystem capacity is missing"
             print(f"Storage mounts: {len(storage)}")
+            interfaces = telemetry.get("network_interfaces")
+            assert isinstance(interfaces, list), "network interface state is unavailable"
+            assert all(
+                isinstance(item.get("name"), str) and isinstance(item.get("is_up"), bool)
+                and isinstance(item.get("addresses"), list)
+                and all(isinstance(address, str) for address in item["addresses"])
+                and isinstance(item.get("default_route"), bool)
+                and (item.get("operational_state") is None or isinstance(item["operational_state"], str))
+                for item in interfaces
+            ), "network interface state contains invalid fields"
+            loopback = next((item for item in interfaces if item["name"] == "lo"), None)
+            assert loopback and "127.0.0.1" in loopback["addresses"], "loopback address is missing"
+            print(f"Network interfaces: {len(interfaces)}; loopback IPv4 available")
             status, workspaces = api("workspace.list", "workspaces")
             assert status == 200 and workspaces["success"] and isinstance(workspaces["payload"], list), f"workspace list returned {status}"
             status, windows = api("window.list", "windows")

@@ -352,6 +352,71 @@ pub fn parse_network_interfaces(input: &str) -> Result<Vec<NetworkInterface>, Te
     Ok(interfaces)
 }
 
+/// Return interface names with an active default IPv4 or IPv6 route.
+pub fn default_route_interfaces(
+    ipv4_routes: &str,
+    ipv6_routes: &str,
+) -> std::collections::BTreeSet<String> {
+    let mut interfaces = std::collections::BTreeSet::new();
+    for line in ipv4_routes.lines().skip(1) {
+        let mut fields = line.split_whitespace();
+        let Some(name) = fields.next() else { continue };
+        let Some(destination) = fields.next() else {
+            continue;
+        };
+        let Some(_gateway) = fields.next() else {
+            continue;
+        };
+        let Some(flags) = fields
+            .next()
+            .and_then(|value| u32::from_str_radix(value, 16).ok())
+        else {
+            continue;
+        };
+        let Some(_ref_count) = fields.next() else {
+            continue;
+        };
+        let Some(_use_count) = fields.next() else {
+            continue;
+        };
+        let Some(_metric) = fields.next() else {
+            continue;
+        };
+        let Some(mask) = fields.next() else { continue };
+        if destination == "00000000"
+            && mask == "00000000"
+            && flags & 1 != 0
+            && valid_interface_name(name)
+        {
+            interfaces.insert(name.to_owned());
+        }
+    }
+
+    for line in ipv6_routes.lines() {
+        let fields = line.split_whitespace().collect::<Vec<_>>();
+        if fields.len() < 10 {
+            continue;
+        }
+        let flags = u32::from_str_radix(fields[8], 16).ok();
+        if fields[0].bytes().all(|byte| byte == b'0')
+            && fields[1] == "00"
+            && flags.is_some_and(|value| value & 1 != 0)
+            && valid_interface_name(fields[9])
+        {
+            interfaces.insert(fields[9].to_owned());
+        }
+    }
+    interfaces
+}
+
+fn valid_interface_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() < 16
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-_.:".contains(&byte))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -493,5 +558,15 @@ mod tests {
         let mounts = parse_storage_mounts("/dev/sda1 /mnt/a\\134b ext4 rw 0 0\nmalformed row\n");
         assert_eq!(mounts.len(), 1);
         assert_eq!(mounts[0].mount_point, "/mnt/a\\b");
+    }
+
+    #[test]
+    fn default_route_parser_finds_only_active_ipv4_and_ipv6_default_interfaces() {
+        let ipv4 = "Iface Destination Gateway Flags RefCnt Use Metric Mask\nwlan0 00000000 0101A8C0 0003 0 0 100 00000000\neth0 00000000 00000000 0002 0 0 0 00000000\neth1 00000000 00000000 0001 0 0 0 FF000000\n";
+        let ipv6 = "00000000000000000000000000000000 00 00000000000000000000000000000000 00 00000000000000000000000000000000 00000000 00 00000000 00000001 wlan0\n00000000000000000000000000000000 00 00000000000000000000000000000000 00 00000000000000000000000000000000 00000000 00 00000000 00000000 eth1\n";
+        assert_eq!(
+            default_route_interfaces(ipv4, ipv6),
+            ["wlan0".to_owned()].into_iter().collect()
+        );
     }
 }

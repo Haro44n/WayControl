@@ -438,6 +438,27 @@ private fun WayControlApp(store: SecureConnectionStore) {
             }
         }
     }
+    val networkInterfaces = networkInterfaceRows(
+        desktop.optJSONArray("network_interfaces") ?: JSONArray(),
+        desktop.optJSONArray("network_rates") ?: JSONArray(),
+    )
+    if (networkInterfaces.isNotEmpty()) {
+        Card {
+            Text("Network interfaces", color = MainText, fontWeight = FontWeight.Medium)
+            networkInterfaces.forEach { network ->
+                Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(network.name, color = MainText)
+                        Text(network.linkState, color = SecondaryText)
+                    }
+                    Text(network.addresses, color = SecondaryText, style = MaterialTheme.typography.bodySmall)
+                    val receive = network.receivedBytesPerSecond?.let(::rate) ?: "Unavailable"
+                    val transmit = network.transmittedBytesPerSecond?.let(::rate) ?: "Unavailable"
+                    Text("↓ $receive · ↑ $transmit", color = SecondaryText, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
     val cpuCores = desktop.optJSONArray("cpu_cores") ?: JSONArray()
     if (cpuCores.length() > 0) {
         Card {

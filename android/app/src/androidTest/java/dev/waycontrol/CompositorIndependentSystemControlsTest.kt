@@ -85,6 +85,43 @@ class CompositorIndependentSystemControlsTest {
     }
 
     @Test
+    fun networkInterfaceAddressesAndRatesRenderWithoutCompositorCapabilities() {
+        val desktop = JSONObject()
+            .put(
+                "network_interfaces",
+                JSONArray().put(
+                    JSONObject()
+                        .put("name", "wlan0")
+                        .put("is_up", true)
+                        .put("operational_state", "up")
+                        .put("default_route", true)
+                        .put("addresses", JSONArray().put("192.168.1.10").put("fe80::1")),
+                ),
+            )
+            .put(
+                "network_rates",
+                JSONArray().put(
+                    JSONObject()
+                        .put("name", "wlan0")
+                        .put("received_bytes_per_second", 1024.0)
+                        .put("transmitted_bytes_per_second", 2048.0),
+                ),
+            )
+        composeRule.setContent {
+            MaterialTheme {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    SystemScreen(desktop, JSONArray(), "Connected", action = { _, _ -> })
+                }
+            }
+        }
+
+        composeRule.onNodeWithText("Network interfaces").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Up · Default route").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("192.168.1.10 · fe80::1").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("↓ 1.0 KiB/s · ↑ 2.0 KiB/s").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
     fun pairingQrActionIsAvailableAndDispatchesScanRequest() {
         val scanRequested = AtomicReference(false)
         composeRule.setContent {

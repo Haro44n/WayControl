@@ -18,10 +18,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, BTreeSet, HashMap},
     convert::Infallible,
-    ffi::CString,
-    net::{IpAddr, SocketAddr},
+    ffi::{CStr, CString},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     path::{Path as FsPath, PathBuf},
     sync::Arc,
     time::Duration,
@@ -1650,6 +1650,7 @@ async fn desktop_snapshot(backend: &dyn CompositorBackend) -> Result<Value, Stri
             json!({"name":rate.name,"received_bytes_per_second":rate.received_bytes_per_second,"transmitted_bytes_per_second":rate.transmitted_bytes_per_second})
         })
         .collect::<Vec<_>>();
+    let network_interfaces = read_network_interfaces();
     let cpu_frequency_khz = read_cpu_core_frequency_khz("cpu0");
     Ok(json!({
         "compositor":backend.info(),
@@ -1664,6 +1665,7 @@ async fn desktop_snapshot(backend: &dyn CompositorBackend) -> Result<Value, Stri
         "load_average":load_average,
         "memory":memory,
         "network_rates":network_rates,
+        "network_interfaces":network_interfaces,
         "gpu":gpu_snapshot()
     }))
 }
@@ -1696,6 +1698,110 @@ fn storage_mount_snapshot(mount: waycontrol_telemetry::StorageMount) -> Option<V
         "used_bytes":total_bytes.saturating_sub(free_bytes),
         "available_bytes":available_bytes
     }))
+}
+
+#[derive(Default)]
+struct NetworkInterfaceSnapshot {
+    is_up: bool,
+    addresses: BTreeSet<String>,
+}
+
+struct IfAddrsGuard(*mut libc::ifaddrs);
+
+impl Drop for IfAddrsGuard {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            // SAFETY: this pointer was allocated by `getifaddrs` and is released once.
+            unsafe { libc::freeifaddrs(self.0) };
+        }
+    }
+}
+
+fn read_network_interfaces() -> Vec<Value> {
+    let mut addresses = std::ptr::null_mut();
+    // SAFETY: `getifaddrs` initializes the output pointer on success.
+    if unsafe { libc::getifaddrs(&mut addresses) } != 0 {
+        return Vec::new();
+    }
+    let _guard = IfAddrsGuard(addresses);
+    let ipv4_routes = std::fs::read_to_string("/proc/net/route").unwrap_or_default();
+    let ipv6_routes = std::fs::read_to_string("/proc/net/ipv6_route").unwrap_or_default();
+    let default_routes = waycontrol_telemetry::default_route_interfaces(&ipv4_routes, &ipv6_routes);
+    let mut interfaces = BTreeMap::<String, NetworkInterfaceSnapshot>::new();
+    let mut current = addresses;
+
+    while !current.is_null() {
+        // SAFETY: each node remains valid until the guard calls `freeifaddrs`.
+        let entry = unsafe { &*current };
+        if !entry.ifa_name.is_null() {
+            // SAFETY: `ifa_name` is a NUL-terminated interface name owned by the list.
+            let name = unsafe { CStr::from_ptr(entry.ifa_name) }
+                .to_string_lossy()
+                .into_owned();
+            if valid_network_interface_name(&name) {
+                let interface = interfaces.entry(name).or_default();
+                interface.is_up |= entry.ifa_flags & libc::IFF_UP as u32 != 0;
+                if !entry.ifa_addr.is_null() {
+                    // SAFETY: `ifa_addr` points to a sockaddr whose first field is its family.
+                    let family = unsafe { (*entry.ifa_addr).sa_family };
+                    let ip_address = match family as i32 {
+                        libc::AF_INET => {
+                            // SAFETY: AF_INET entries are `sockaddr_in` values.
+                            let address = unsafe { &*(entry.ifa_addr as *const libc::sockaddr_in) };
+                            Some(Ipv4Addr::from(address.sin_addr.s_addr.to_ne_bytes()).to_string())
+                        }
+                        libc::AF_INET6 => {
+                            // SAFETY: AF_INET6 entries are `sockaddr_in6` values.
+                            let address =
+                                unsafe { &*(entry.ifa_addr as *const libc::sockaddr_in6) };
+                            Some(Ipv6Addr::from(address.sin6_addr.s6_addr).to_string())
+                        }
+                        _ => None,
+                    };
+                    if let Some(ip_address) = ip_address
+                        && interface.addresses.len() < 16
+                    {
+                        interface.addresses.insert(ip_address);
+                    }
+                }
+            }
+        }
+        current = entry.ifa_next;
+    }
+
+    interfaces
+        .into_iter()
+        .take(64)
+        .map(|(name, interface)| {
+            let operational_state =
+                std::fs::read_to_string(format!("/sys/class/net/{name}/operstate"))
+                    .ok()
+                    .map(|state| state.trim().to_owned())
+                    .filter(|state| {
+                        matches!(
+                            state.as_str(),
+                            "up" | "down" | "unknown" | "dormant" | "lowerlayerdown" | "notpresent"
+                        )
+                    });
+            json!({
+                "name":name,
+                "is_up":interface.is_up,
+                "operational_state":operational_state,
+                "addresses":interface.addresses,
+                "default_route":default_routes.contains(&name)
+            })
+        })
+        .collect()
+}
+
+fn valid_network_interface_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && name.len() < 16
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-_.:".contains(&byte))
 }
 
 fn read_cpu_core_frequency_khz(core_id: &str) -> Option<u64> {
