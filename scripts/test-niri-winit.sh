@@ -110,5 +110,6 @@ if [[ "$window_list" != *"WayControlLiveTest"* ]]; then
     cat "$runtime_dir/foot.log"
     exit 1
 fi
+echo "Niri live window JSON: $window_list"
 WAYCONTROL_TEST_LIVE_NIRI=1 cargo test -p waycontrol-backend-niri \
     live_niri_supports_workspace_window_output_event_and_window_actions -- --ignored --nocapture

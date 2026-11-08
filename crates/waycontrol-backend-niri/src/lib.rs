@@ -375,10 +375,10 @@ mod tests {
         let window = tokio::time::timeout(std::time::Duration::from_secs(10), async {
             loop {
                 if let Ok(windows) = adapter.windows().await {
-                    if let Some(window) = windows
-                        .into_iter()
-                        .find(|window| window.title == "WayControlLiveTest")
-                    {
+                    if let Some(window) = windows.into_iter().find(|window| {
+                        window.title == "WayControlLiveTest"
+                            || window.app_id == "WayControlLiveTest"
+                    }) {
                         break window;
                     }
                 }
