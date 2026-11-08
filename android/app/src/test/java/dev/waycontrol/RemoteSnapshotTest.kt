@@ -14,6 +14,7 @@ class RemoteSnapshotTest {
             workspaces = JSONArray().put(JSONObject().put("id", 1)),
             windows = JSONArray().put(JSONObject().put("address", "0x123")),
             monitors = JSONArray().put(JSONObject().put("name", "DP-1")),
+            networkLatencyMs = 12,
         )
 
         val disconnected = previous.cleared()
@@ -22,5 +23,6 @@ class RemoteSnapshotTest {
         assertEquals(0, disconnected.workspaces.length())
         assertEquals(0, disconnected.windows.length())
         assertEquals(0, disconnected.monitors.length())
+        assertEquals(null, disconnected.networkLatencyMs)
     }
 }

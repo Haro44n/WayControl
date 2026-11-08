@@ -182,7 +182,9 @@ private fun WayControlApp(store: SecureConnectionStore) {
             try {
                 val updated = withContext(Dispatchers.IO) {
                     val client = WayControlClient(endpoint, pin, token)
+                    val desktopStartedAt = System.nanoTime()
                     val desktop = client.request("desktop.info")
+                    val networkLatencyMs = ((System.nanoTime() - desktopStartedAt) / 1_000_000L).coerceAtLeast(0)
                     val fetch = compositorFetchPlan(CompositorCapabilities.fromDesktop(desktop))
                     RemoteSnapshot(
                         desktop = desktop,
@@ -193,6 +195,7 @@ private fun WayControlApp(store: SecureConnectionStore) {
                             .getOrElse { JSONObject().put("available", false) },
                         media = runCatching { client.request("media.info").put("available", true) }
                             .getOrElse { JSONObject().put("available", false) },
+                        networkLatencyMs = networkLatencyMs,
                     )
                 }
                 if (selected == Destination.System) {
@@ -274,7 +277,7 @@ private fun WayControlApp(store: SecureConnectionStore) {
             Column(Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 when (selected) {
-                    Destination.Home -> HomeScreen(status, loading, error, snapshot.desktop, snapshot.workspaces)
+                    Destination.Home -> HomeScreen(status, loading, error, snapshot.desktop, snapshot.workspaces, snapshot.windows, snapshot.networkLatencyMs)
                     Destination.Workspaces -> WorkspaceScreen(snapshot.workspaces, status, capabilities.switchWorkspace) { id ->
                         scope.launch { runCatching { withContext(Dispatchers.IO) { WayControlClient(endpoint, pin, token).request("workspace.switch", JSONObject().put("workspace_id", id)) } }.onFailure { error = it.message } }
                     }
@@ -405,16 +408,25 @@ private fun WayControlApp(store: SecureConnectionStore) {
     }
 }
 
-@Composable private fun HomeScreen(status: String, loading: Boolean, error: String?, desktop: JSONObject, workspaces: JSONArray) {
-    val compositor = desktop.optJSONObject("compositor")?.optString("name") ?: "Compositor not detected"
-    Header("WayControl", compositor)
+@Composable private fun HomeScreen(status: String, loading: Boolean, error: String?, desktop: JSONObject, workspaces: JSONArray, windows: JSONArray, networkLatencyMs: Long?) {
+    val summary = homeDashboardSummary(desktop, workspaces, windows, networkLatencyMs)
+    Header("WayControl", summary.compositor)
     Card {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(desktop.optString("computer_name", "Desktop"), color = MainText, style = MaterialTheme.typography.titleMedium)
-                Text(if (loading) "Refreshing" else error ?: status, color = SecondaryText, style = MaterialTheme.typography.bodyMedium)
+                Text(summary.computerName, color = MainText, style = MaterialTheme.typography.titleMedium)
+                Text("${summary.operatingSystem} · ${summary.compositor}", color = SecondaryText, style = MaterialTheme.typography.bodyMedium)
+                Text("${if (loading) "Refreshing" else error ?: status} · ${summary.networkLatency}", color = SecondaryText, style = MaterialTheme.typography.bodyMedium)
             }
             Text(status.uppercase(), color = if (status == "Connected") Color(0xFF85C99A) else SecondaryText, style = MaterialTheme.typography.labelMedium)
+        }
+    }
+    Card {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Active workspace", color = SecondaryText)
+            Text(summary.activeWorkspace, color = MainText, fontWeight = FontWeight.Medium)
+            Text("Active application", color = SecondaryText)
+            Text(summary.activeApplication, color = MainText, fontWeight = FontWeight.Medium)
         }
     }
     Text("Performance", color = MainText, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)

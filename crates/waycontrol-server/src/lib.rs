@@ -453,6 +453,13 @@ impl CompositorBackend for WaylandBackend {
         }
     }
 
+    async fn version(&self) -> Option<String> {
+        match self {
+            Self::Hyprland(adapter) => adapter.version().await,
+            _ => None,
+        }
+    }
+
     async fn workspaces(&self) -> Result<Vec<Workspace>, String> {
         match self {
             Self::Hyprland(adapter) => adapter.workspaces().await,
@@ -1854,7 +1861,33 @@ fn required_capability(operation: &Operation) -> Option<fn(&CompositorCapabiliti
     }
 }
 
+fn parse_os_pretty_name(contents: &str) -> Option<String> {
+    contents.lines().find_map(|line| {
+        let value = line.strip_prefix("PRETTY_NAME=")?.trim();
+        let value = if (value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\''))
+        {
+            &value[1..value.len() - 1]
+        } else {
+            value
+        };
+        let value = value
+            .chars()
+            .filter(|character| !character.is_control())
+            .collect::<String>();
+        (!value.trim().is_empty()).then_some(value)
+    })
+}
+
+fn read_os_pretty_name() -> Option<String> {
+    std::fs::read_to_string("/etc/os-release")
+        .ok()
+        .and_then(|contents| parse_os_pretty_name(&contents))
+}
+
 async fn desktop_snapshot(backend: &dyn CompositorBackend) -> Result<Value, String> {
+    let mut compositor = backend.info();
+    compositor.version = backend.version().await;
     let sample_started = tokio::time::Instant::now();
     let uptime = std::fs::read_to_string("/proc/uptime")
         .map_err(|e| e.to_string())?
@@ -1937,9 +1970,10 @@ async fn desktop_snapshot(backend: &dyn CompositorBackend) -> Result<Value, Stri
     let network_interfaces = read_network_interfaces();
     let cpu_frequency_khz = read_cpu_core_frequency_khz("cpu0");
     Ok(json!({
-        "compositor":backend.info(),
+        "compositor":compositor,
         "capabilities":backend.capabilities(),
         "computer_name":std::fs::read_to_string("/etc/hostname").unwrap_or_default().trim(),
+        "os_name":read_os_pretty_name().unwrap_or_else(|| "Unavailable".to_owned()),
         "uptime_seconds":uptime,
         "cpu_usage_percent":cpu,
         "cpu_frequency_khz":cpu_frequency_khz,
@@ -3177,7 +3211,26 @@ mod tests {
         assert_eq!(json["payload"]["compositor"]["id"], "hyprland");
         assert_eq!(json["payload"]["capabilities"]["switch_workspace"], true);
         assert_eq!(json["payload"]["capabilities"]["events"], true);
+        assert!(
+            json["payload"]["os_name"]
+                .as_str()
+                .is_some_and(|name| !name.is_empty())
+        );
         let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn os_release_pretty_name_parser_reads_only_the_named_value() {
+        assert_eq!(
+            parse_os_pretty_name("ID=arch\nPRETTY_NAME=\"Arch Linux\"\nNAME=Arch\n"),
+            Some("Arch Linux".to_owned()),
+        );
+        assert_eq!(
+            parse_os_pretty_name("NAME='Example OS'\nPRETTY_NAME='Example OS Rolling'\n"),
+            Some("Example OS Rolling".to_owned()),
+        );
+        assert_eq!(parse_os_pretty_name("ID=unknown\n"), None);
+        assert_eq!(parse_os_pretty_name("PRETTY_NAME=\"\"\n"), None);
     }
 
     #[tokio::test]

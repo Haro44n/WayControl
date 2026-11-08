@@ -10,6 +10,7 @@ internal data class RemoteSnapshot(
     val monitors: JSONArray = JSONArray(),
     val audio: JSONObject = JSONObject(),
     val media: JSONObject = JSONObject(),
+    val networkLatencyMs: Long? = null,
 ) {
     fun cleared() = RemoteSnapshot()
 }

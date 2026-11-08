@@ -136,6 +136,10 @@ impl HyprlandClient {
         Ok(String::from_utf8_lossy(&response).into_owned())
     }
 
+    pub async fn version(&self) -> Result<String, HyprlandError> {
+        parse_hyprland_version(&self.request("j/version").await?)
+    }
+
     pub async fn workspaces(&self) -> Result<Vec<Workspace>, HyprlandError> {
         let workspaces: Vec<Value> = serde_json::from_str(&self.request("j/workspaces").await?)?;
         let active = serde_json::from_str::<Value>(&self.request("j/activeworkspace").await?)?
@@ -383,6 +387,17 @@ impl HyprlandClient {
     }
 }
 
+fn parse_hyprland_version(response: &str) -> Result<String, HyprlandError> {
+    let value: Value = serde_json::from_str(response)?;
+    ["tag", "version"]
+        .into_iter()
+        .filter_map(|field| value.get(field).and_then(Value::as_str))
+        .map(str::trim)
+        .find(|version| !version.is_empty())
+        .map(str::to_owned)
+        .ok_or(HyprlandError::InvalidResponse("version"))
+}
+
 fn has_ipc_sockets(path: &FsPath) -> bool {
     [".socket.sock", ".socket2.sock"].iter().all(|name| {
         std::fs::symlink_metadata(path.join(name))
@@ -415,6 +430,47 @@ mod tests {
             PathBuf::from("/run/user/1000/hypr/abc")
         );
         assert!(socket_dir(Some("/run/user/1000"), Some("../other")).is_err());
+    }
+
+    #[test]
+    fn hyprland_version_parser_prefers_tag_and_falls_back_to_version() {
+        assert_eq!(
+            parse_hyprland_version(r#"{"tag":"v0.57.0","branch":"main"}"#).unwrap(),
+            "v0.57.0",
+        );
+        assert_eq!(
+            parse_hyprland_version(r#"{"version":"0.57.0"}"#).unwrap(),
+            "0.57.0",
+        );
+        assert!(parse_hyprland_version(r#"{"branch":"main"}"#).is_err());
+    }
+
+    #[tokio::test]
+    async fn client_reads_hyprland_version_from_the_target_instance() {
+        use tokio::{io::AsyncReadExt, net::UnixListener};
+
+        let dir = std::env::temp_dir().join(format!("waycontrol-version-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let listener = UnixListener::bind(dir.join(".socket.sock")).unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 64];
+            let size = stream.read(&mut request).await.unwrap();
+            assert_eq!(&request[..size], b"j/version");
+            stream
+                .write_all(br#"{"tag":"v0.57.0","branch":"main"}"#)
+                .await
+                .unwrap();
+        });
+
+        let version = HyprlandClient::at_socket_dir(dir.clone())
+            .version()
+            .await
+            .unwrap();
+        server.await.unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+        assert_eq!(version, "v0.57.0");
     }
 
     #[tokio::test]

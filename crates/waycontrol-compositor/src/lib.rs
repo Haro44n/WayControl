@@ -153,6 +153,9 @@ impl CompositorCapabilities {
 pub trait CompositorBackend: Send + Sync + 'static {
     fn info(&self) -> CompositorInfo;
     fn capabilities(&self) -> CompositorCapabilities;
+    async fn version(&self) -> Option<String> {
+        None
+    }
     async fn workspaces(&self) -> Result<Vec<Workspace>, String>;
     async fn windows(&self) -> Result<Vec<Window>, String>;
     async fn switch_workspace(&self, id: &WorkspaceId) -> Result<(), String>;

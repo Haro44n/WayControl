@@ -1,6 +1,7 @@
 //! Hyprland adapter for WayControl's compositor API.
 
 use async_trait::async_trait;
+use std::sync::{Arc, OnceLock};
 use tokio::net::UnixStream;
 use waycontrol_compositor::{
     CompositorBackend, CompositorCapabilities, CompositorInfo, CompositorKind,
@@ -11,6 +12,7 @@ use waycontrol_hyprland::{HyprlandClient, HyprlandError};
 #[derive(Clone)]
 pub struct HyprlandAdapter {
     client: Option<HyprlandClient>,
+    version: Arc<OnceLock<String>>,
 }
 
 impl HyprlandAdapter {
@@ -21,6 +23,7 @@ impl HyprlandAdapter {
     pub fn from_env() -> Result<Self, HyprlandError> {
         Ok(Self {
             client: Some(HyprlandClient::from_env()?),
+            version: Arc::new(OnceLock::new()),
         })
     }
 
@@ -28,7 +31,10 @@ impl HyprlandAdapter {
     pub fn from_env_or_unavailable() -> Self {
         match Self::from_env() {
             Ok(backend) => backend,
-            Err(_) => Self { client: None },
+            Err(_) => Self {
+                client: None,
+                version: Arc::new(OnceLock::new()),
+            },
         }
     }
 
@@ -42,6 +48,15 @@ impl HyprlandAdapter {
         }
         HyprlandClient::from_env_or_discover().map_err(|error| error.to_string())
     }
+
+    async fn version(&self) -> Option<String> {
+        if let Some(version) = self.version.get() {
+            return Some(version.clone());
+        }
+        let version = self.client().ok()?.version().await.ok()?;
+        let _ = self.version.set(version.clone());
+        Some(version)
+    }
 }
 
 #[async_trait]
@@ -52,6 +67,10 @@ impl CompositorBackend for HyprlandAdapter {
 
     fn capabilities(&self) -> CompositorCapabilities {
         CompositorCapabilities::HYPRLAND
+    }
+
+    async fn version(&self) -> Option<String> {
+        HyprlandAdapter::version(self).await
     }
 
     async fn workspaces(&self) -> Result<Vec<Workspace>, String> {
