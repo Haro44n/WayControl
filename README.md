@@ -1,6 +1,5 @@
 # WayControl
 
-**Your desktop. Your control.**
 
 WayControl is a native Android companion for Wayland desktops. The Hyprland adapter provides authenticated workspace, window, monitor, and event control, with a live loopback integration run. The Sway adapter implements workspace, window, output, and event IPC; the Niri adapter implements workspace, window, output, and event IPC. Both have protocol-fixture tests and still need live-session validation. Niri fullscreen toggles and per-monitor power remain unavailable because its current IPC model does not expose fullscreen state or per-output power control. KDE KWin supports workspace listing, switching, and workspace-change events through its D-Bus API; window and monitor controls remain unavailable. GNOME sessions are detected but compositor controls remain unsupported; no general remote-control interface was identified, and GNOME integration needs further investigation. The authenticated HTTPS daemon, explicit Linux-side pairing approval, typed allowlist API, and live Linux telemetry do not depend on a compositor. WayControl does not execute arbitrary remote shell commands.
 
