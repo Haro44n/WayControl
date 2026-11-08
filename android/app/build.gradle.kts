@@ -3,6 +3,17 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val releaseSigningEnvironment = listOf(
+    "WAYCONTROL_RELEASE_STORE_FILE",
+    "WAYCONTROL_RELEASE_STORE_PASSWORD",
+    "WAYCONTROL_RELEASE_KEY_ALIAS",
+    "WAYCONTROL_RELEASE_KEY_PASSWORD",
+).associateWith { providers.environmentVariable(it).orNull?.takeIf(String::isNotBlank) }
+val releaseSigningConfigured = releaseSigningEnvironment.values.any { it != null }
+if (releaseSigningConfigured && releaseSigningEnvironment.values.any { it == null }) {
+    throw GradleException("Set all WAYCONTROL_RELEASE_* signing environment variables to sign a release APK")
+}
+
 android {
     namespace = "dev.waycontrol"
     compileSdk = 37
@@ -17,9 +28,22 @@ android {
     }
 
     buildFeatures { compose = true }
+    signingConfigs {
+        if (releaseSigningConfigured) {
+            create("release") {
+                storeFile = file(releaseSigningEnvironment.getValue("WAYCONTROL_RELEASE_STORE_FILE")!!)
+                storePassword = releaseSigningEnvironment.getValue("WAYCONTROL_RELEASE_STORE_PASSWORD")
+                keyAlias = releaseSigningEnvironment.getValue("WAYCONTROL_RELEASE_KEY_ALIAS")
+                keyPassword = releaseSigningEnvironment.getValue("WAYCONTROL_RELEASE_KEY_PASSWORD")
+            }
+        }
+    }
     buildTypes {
         release {
             isMinifyEnabled = true
+            if (releaseSigningConfigured) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
