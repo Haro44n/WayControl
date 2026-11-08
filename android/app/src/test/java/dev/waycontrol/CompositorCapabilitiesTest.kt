@@ -40,7 +40,7 @@ class CompositorCapabilitiesTest {
         assertFalse(parsed.windows)
         assertFalse(parsed.monitors)
         assertEquals(
-            listOf(Destination.Home, Destination.Workspaces, Destination.System, Destination.Settings),
+            listOf(Destination.Home, Destination.Workspaces, Destination.System, Destination.Automation, Destination.Settings),
             visibleDestinations(parsed),
         )
         assertEquals(
@@ -52,11 +52,11 @@ class CompositorCapabilitiesTest {
     @Test
     fun compositorNavigationOnlyIncludesAvailableSections() {
         assertEquals(
-            listOf(Destination.Home, Destination.System, Destination.Settings),
+            listOf(Destination.Home, Destination.System, Destination.Automation, Destination.Settings),
             visibleDestinations(CompositorCapabilities()),
         )
         assertEquals(
-            listOf(Destination.Home, Destination.Workspaces, Destination.System, Destination.Settings),
+            listOf(Destination.Home, Destination.Workspaces, Destination.System, Destination.Automation, Destination.Settings),
             visibleDestinations(CompositorCapabilities(workspaces = true)),
         )
     }

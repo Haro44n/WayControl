@@ -21,6 +21,8 @@ pub enum Operation {
     ListWorkspaces,
     #[serde(rename = "workspace.switch")]
     SwitchWorkspace { workspace_id: WorkspaceId },
+    #[serde(rename = "app.launch")]
+    LaunchApplication { desktop_id: String },
     #[serde(rename = "window.list")]
     ListWindows,
     #[serde(rename = "window.focus")]
@@ -135,6 +137,8 @@ pub enum ProtocolError {
     InvalidMediaPlayerId,
     #[error("media artwork id is invalid")]
     InvalidMediaArtworkId,
+    #[error("desktop entry id is invalid")]
+    InvalidDesktopEntryId,
 }
 
 impl RequestEnvelope {
@@ -181,6 +185,19 @@ impl RequestEnvelope {
             {
                 return Err(ProtocolError::InvalidWorkspaceId);
             }
+        }
+        if let Operation::LaunchApplication { desktop_id } = &self.operation
+            && (desktop_id.is_empty()
+                || desktop_id.len() > 256
+                || !desktop_id
+                    .bytes()
+                    .next()
+                    .is_some_and(|byte| byte.is_ascii_alphanumeric())
+                || !desktop_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')))
+        {
+            return Err(ProtocolError::InvalidDesktopEntryId);
         }
         if let Operation::SetMonitorPower { monitor, .. } = &self.operation {
             if monitor.is_empty()
@@ -453,6 +470,21 @@ mod tests {
             r#"{"version":1,"id":"media-action","type":"media.next","payload":{"player_id":"player;reboot"}}"#,
         ).unwrap();
         assert_eq!(bad.validate(), Err(ProtocolError::InvalidMediaPlayerId));
+    }
+
+    #[test]
+    fn application_launch_accepts_only_a_single_desktop_entry_id() {
+        let valid: RequestEnvelope = serde_json::from_str(
+            r#"{"version":1,"id":"launch","type":"app.launch","payload":{"desktop_id":"org.mozilla.Firefox"}}"#,
+        )
+        .expect("app.launch is a typed operation");
+        assert_eq!(valid.validate(), Ok(()));
+
+        let invalid: RequestEnvelope = serde_json::from_str(
+            r#"{"version":1,"id":"launch","type":"app.launch","payload":{"desktop_id":"terminal; reboot"}}"#,
+        )
+        .expect("launch IDs are parsed before validation");
+        assert!(invalid.validate().is_err());
     }
 
     #[test]

@@ -187,6 +187,7 @@ pub trait SystemControlBackend: Send + Sync + 'static {
     async fn media_play_pause_for(&self, player_id: &str) -> Result<(), String>;
     async fn media_next(&self, player_id: &str) -> Result<(), String>;
     async fn media_previous(&self, player_id: &str) -> Result<(), String>;
+    async fn launch_application(&self, desktop_id: &str) -> Result<(), String>;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -570,6 +571,13 @@ pub struct HostSystemControls;
 
 #[async_trait]
 impl SystemControlBackend for HostSystemControls {
+    async fn launch_application(&self, desktop_id: &str) -> Result<(), String> {
+        if !valid_desktop_entry_id(desktop_id) {
+            return Err("desktop entry id is invalid".to_owned());
+        }
+        run_allowlisted("/usr/bin/gtk-launch", &[desktop_id]).await
+    }
+
     async fn system_power(&self, action: PowerAction) -> Result<(), String> {
         let action = match action {
             PowerAction::Suspend => "suspend",
@@ -756,6 +764,18 @@ impl SystemControlBackend for HostSystemControls {
     async fn media_previous(&self, player_id: &str) -> Result<(), String> {
         self.control_player(player_id, "previous").await
     }
+}
+
+fn valid_desktop_entry_id(desktop_id: &str) -> bool {
+    !desktop_id.is_empty()
+        && desktop_id.len() <= 256
+        && desktop_id
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && desktop_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 impl HostSystemControls {
@@ -1672,6 +1692,12 @@ async fn request(
             .workspaces()
             .await
             .map(|data| json!(data)),
+        Operation::LaunchApplication { desktop_id } => state
+            .0
+            .system
+            .launch_application(&desktop_id)
+            .await
+            .map(|()| json!({})),
         Operation::ListWindows => state.0.compositor.windows().await.map(|data| json!(data)),
         Operation::SwitchWorkspace { workspace_id } => state
             .0
@@ -2898,6 +2924,9 @@ mod tests {
             Ok(())
         }
         async fn media_previous(&self, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+        async fn launch_application(&self, _: &str) -> Result<(), String> {
             Ok(())
         }
     }

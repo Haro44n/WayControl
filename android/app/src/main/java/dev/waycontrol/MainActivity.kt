@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -24,6 +25,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
@@ -33,6 +35,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
@@ -42,6 +45,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -92,7 +96,7 @@ class MainActivity : ComponentActivity() {
 
 internal enum class Destination(val label: String, val glyph: String) {
     Home("Home", "⌂"), Workspaces("Workspaces", "▦"), Windows("Windows", "▣"),
-    System("System", "◷"), Settings("Settings", "⚙")
+    System("System", "◷"), Automation("Profiles", "⚡"), Settings("Settings", "⚙")
 }
 
 internal fun visibleDestinations(capabilities: CompositorCapabilities): List<Destination> = buildList {
@@ -100,6 +104,7 @@ internal fun visibleDestinations(capabilities: CompositorCapabilities): List<Des
     if (capabilities.workspaces) add(Destination.Workspaces)
     if (capabilities.windows) add(Destination.Windows)
     add(Destination.System)
+    add(Destination.Automation)
     add(Destination.Settings)
 }
 
@@ -128,6 +133,10 @@ private fun WayControlApp(store: SecureConnectionStore) {
     var snapshot by remember { mutableStateOf(RemoteSnapshot()) }
     var telemetryHistory by remember { mutableStateOf(TelemetryHistory()) }
     var mediaArtwork by remember { mutableStateOf<MediaArtworkImage?>(null) }
+    val automationStore = remember(context) { AutomationProfileStore(context) }
+    var automationProfiles by remember(context) { mutableStateOf(automationStore.load()) }
+    var automationResult by remember { mutableStateOf<JSONObject?>(null) }
+    var profileConfirmation by remember { mutableStateOf<AutomationProfile?>(null) }
     var eventCounter by remember { mutableIntStateOf(0) }
     var discoveredServers by remember { mutableStateOf(emptyList<DiscoveredServer>()) }
     var discoveryStatus by remember { mutableStateOf<String?>(null) }
@@ -137,6 +146,25 @@ private fun WayControlApp(store: SecureConnectionStore) {
     val capabilities = remember(snapshot.desktop) { CompositorCapabilities.fromDesktop(snapshot.desktop) }
     val destinations = remember(capabilities) { visibleDestinations(capabilities) }
     val artworkTarget = remember(snapshot.media) { mediaArtworkTarget(snapshot.media) }
+
+    fun runAutomation(profile: AutomationProfile, confirmed: Boolean) {
+        scope.launch {
+            automationResult = withContext(Dispatchers.IO) {
+                runCatching {
+                    val savedToken = token ?: error("Connect to a desktop before running a profile")
+                    executeAutomationProfile(profile, confirmed) { operation, payload ->
+                        WayControlClient(endpoint, pin, savedToken).request(operation, payload)
+                    }
+                }.getOrElse { failure ->
+                    JSONObject()
+                        .put("profile_id", profile.id)
+                        .put("succeeded", false)
+                        .put("summary", failure.message ?: "Profile execution failed")
+                        .put("steps", JSONArray())
+                }
+            }
+        }
+    }
 
     LaunchedEffect(destinations, selected) {
         if (selected !in destinations) selected = Destination.Home
@@ -256,6 +284,28 @@ private fun WayControlApp(store: SecureConnectionStore) {
                     Destination.System -> SystemScreenWithHistory(snapshot.desktop, snapshot.monitors, status, capabilities, snapshot.audio, snapshot.media, telemetryHistory, mediaArtwork) { operation, payload ->
                         scope.launch { runCatching { withContext(Dispatchers.IO) { WayControlClient(endpoint, pin, token).request(operation, payload) } }.onFailure { error = it.message } }
                     }
+                    Destination.Automation -> AutomationScreen(
+                        profiles = automationProfiles,
+                        result = automationResult,
+                        connected = token != null,
+                        onSave = { profile ->
+                            val updated = if (automationProfiles.any { it.id == profile.id }) {
+                                automationProfiles.map { if (it.id == profile.id) profile else it }
+                            } else automationProfiles + profile
+                            automationProfiles = updated
+                            automationStore.save(updated)
+                        },
+                        onDelete = { profile ->
+                            val updated = automationProfiles.filterNot { it.id == profile.id }
+                            automationProfiles = updated
+                            automationStore.save(updated)
+                            if (automationResult?.optString("profile_id") == profile.id) automationResult = null
+                        },
+                        onRun = { profile ->
+                            if (profileRequiresConfirmation(profile)) profileConfirmation = profile
+                            else runAutomation(profile, confirmed = true)
+                        },
+                    )
                     Destination.Settings -> SettingsScreen(
                         endpoint, { endpoint = it }, pin, { pin = it }, code, { code = it }, status, error, loading,
                         refreshInterval = refreshInterval,
@@ -338,6 +388,20 @@ private fun WayControlApp(store: SecureConnectionStore) {
                 if (error != null && selected != Destination.Settings) Text(error!!, color = Color(0xFFE6A6B8))
             }
         }
+    }
+    profileConfirmation?.let { profile ->
+        AlertDialog(
+            onDismissRequest = { profileConfirmation = null },
+            title = { Text("Run ${profile.name}?") },
+            text = { Text("This profile includes actions that need your confirmation. Review its ordered steps before continuing.") },
+            confirmButton = {
+                Button(onClick = {
+                    profileConfirmation = null
+                    runAutomation(profile, confirmed = true)
+                }) { Text("Run profile") }
+            },
+            dismissButton = { Button(onClick = { profileConfirmation = null }) { Text("Cancel") } },
+        )
     }
 }
 
@@ -742,6 +806,191 @@ private fun WayControlApp(store: SecureConnectionStore) {
     if (error != null) Text(error, color = Color(0xFFE6A6B8))
     if (status == "Waiting for Linux approval") CircularProgressIndicator(color = Accent)
     if (store.load() != null) Button(onClick = onDisconnect) { Text("Disconnect and erase saved credentials") }
+}
+
+@Composable
+internal fun AutomationScreen(
+    profiles: List<AutomationProfile>,
+    result: JSONObject?,
+    connected: Boolean,
+    onSave: (AutomationProfile) -> Unit,
+    onDelete: (AutomationProfile) -> Unit,
+    onRun: (AutomationProfile) -> Unit,
+) {
+    var editing by remember { mutableStateOf<AutomationProfile?>(null) }
+    Header("Automation profiles", "Run ordered, approved desktop actions")
+    Text(
+        "Profiles stay on this device. Actions call WayControl's typed operations; profile text is never run as a shell command.",
+        color = SecondaryText,
+    )
+    Button(onClick = {
+        editing = AutomationProfile(
+            id = "custom-${System.currentTimeMillis()}",
+            name = "My profile",
+            icon = "⚙️",
+            actions = emptyList(),
+        )
+    }) { Text("Add profile") }
+    profiles.forEach { profile ->
+        Card {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("${profile.icon}  ${profile.name}", color = MainText, fontWeight = FontWeight.Medium)
+                    Text("${profile.actions.size} ordered action(s)", color = SecondaryText)
+                }
+                Switch(
+                    checked = profile.enabled,
+                    onCheckedChange = { onSave(profile.copy(enabled = it)) },
+                    modifier = Modifier.semantics { contentDescription = "Enable ${profile.name}" },
+                )
+            }
+            if (profile.actions.isEmpty()) {
+                Text("No actions configured yet", color = SecondaryText)
+            } else {
+                profile.actions.forEachIndexed { index, action ->
+                    Text("${index + 1}. ${automationActionLabel(action)}", color = SecondaryText)
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { editing = profile }) { Text("Edit") }
+                Button(onClick = { onRun(profile) }, enabled = connected && profileCanRun(profile)) { Text("Run") }
+                if (profile.id.startsWith("custom-")) {
+                    Button(onClick = { onDelete(profile) }) { Text("Delete") }
+                }
+            }
+            if (result?.optString("profile_id") == profile.id) {
+                Text(result.optString("summary"), color = if (result.optBoolean("succeeded")) Accent else Color(0xFFE6A6B8))
+                val steps = result.optJSONArray("steps") ?: JSONArray()
+                for (index in 0 until steps.length()) {
+                    val step = steps.optJSONObject(index) ?: continue
+                    Text(
+                        "${step.optString("action")}: ${step.optString("message")}",
+                        color = if (step.optBoolean("succeeded")) SecondaryText else Color(0xFFE6A6B8),
+                    )
+                }
+            }
+        }
+    }
+    editing?.let { profile ->
+        AutomationProfileEditor(
+            profile = profile,
+            onDismiss = { editing = null },
+            onSave = { editedProfile ->
+                onSave(editedProfile)
+                editing = null
+            },
+        )
+    }
+}
+
+@Composable
+private fun AutomationProfileEditor(
+    profile: AutomationProfile,
+    onDismiss: () -> Unit,
+    onSave: (AutomationProfile) -> Unit,
+) {
+    var name by remember(profile.id) { mutableStateOf(profile.name) }
+    var icon by remember(profile.id) { mutableStateOf(profile.icon) }
+    var requiresConfirmation by remember(profile.id) { mutableStateOf(profile.requiresConfirmation) }
+    var selectedType by remember(profile.id) { mutableStateOf(AutomationActionType.LAUNCH_APPLICATION) }
+    var value by remember(profile.id) { mutableStateOf("") }
+    var expanded by remember { mutableStateOf(false) }
+    var validationError by remember { mutableStateOf<String?>(null) }
+    val actions = remember(profile.id) { mutableStateListOf(*profile.actions.toTypedArray()) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit profile") },
+        text = {
+            Column(
+                Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedTextField(name, { name = it }, label = { Text("Name") }, singleLine = true)
+                OutlinedTextField(icon, { icon = it }, label = { Text("Icon") }, singleLine = true)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(requiresConfirmation, { requiresConfirmation = it })
+                    Text("Ask before running", color = MainText)
+                }
+                Text("Ordered actions", color = MainText, fontWeight = FontWeight.Medium)
+                actions.forEachIndexed { index, action ->
+                    Column {
+                        Text("${index + 1}. ${automationActionLabel(action)}", color = SecondaryText)
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Button(onClick = {
+                                if (index > 0) {
+                                    val item = actions.removeAt(index)
+                                    actions.add(index - 1, item)
+                                }
+                            }, enabled = index > 0) { Text("↑") }
+                            Button(onClick = {
+                                if (index < actions.lastIndex) {
+                                    val item = actions.removeAt(index)
+                                    actions.add(index + 1, item)
+                                }
+                            }, enabled = index < actions.lastIndex) { Text("↓") }
+                            Button(onClick = { actions.removeAt(index) }) { Text("Remove") }
+                        }
+                    }
+                }
+                Box {
+                    Button(onClick = { expanded = true }) { Text(selectedType.label) }
+                    DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                        AutomationActionType.entries.forEach { type ->
+                            DropdownMenuItem(
+                                text = { Text(type.label) },
+                                onClick = { selectedType = type; value = ""; expanded = false },
+                            )
+                        }
+                    }
+                }
+                if (selectedType.needsValue) {
+                    OutlinedTextField(
+                        value = value,
+                        onValueChange = { value = it },
+                        label = { Text(when (selectedType) {
+                            AutomationActionType.LAUNCH_APPLICATION -> "Desktop application ID"
+                            AutomationActionType.SWITCH_WORKSPACE -> "Workspace name or number"
+                            AutomationActionType.SET_VOLUME -> "Output volume (0–100)"
+                            else -> "Value"
+                        }) },
+                        singleLine = true,
+                    )
+                }
+                Button(onClick = {
+                    val action = sanitizeAutomationAction(AutomationAction(selectedType, value))
+                    if (action == null) validationError = "Enter a valid value for this action"
+                    else {
+                        actions.add(action)
+                        value = ""
+                        validationError = null
+                    }
+                }) { Text("Add action") }
+                if (validationError != null) Text(validationError!!, color = Color(0xFFE6A6B8))
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                val updated = sanitizeAutomationProfile(
+                    profile.copy(name = name, icon = icon, actions = actions.toList(), requiresConfirmation = requiresConfirmation),
+                )
+                if (updated == null) validationError = "Provide a valid name and icon"
+                else onSave(updated)
+            }) { Text("Save") }
+        },
+        dismissButton = { Button(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+private fun automationActionLabel(action: AutomationAction): String = when (action.type) {
+    AutomationActionType.LAUNCH_APPLICATION -> "${action.type.label}: ${action.value}"
+    AutomationActionType.SWITCH_WORKSPACE -> "${action.type.label}: ${action.value}"
+    AutomationActionType.SET_VOLUME -> "${action.type.label}: ${action.value}%"
+    else -> action.type.label
 }
 
 @Composable internal fun TelemetryRefreshSection(
