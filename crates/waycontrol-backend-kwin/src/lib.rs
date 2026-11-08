@@ -222,6 +222,71 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
+    #[tokio::test]
+    #[ignore = "requires an isolated live KWin session and WAYCONTROL_TEST_LIVE_KWIN=1"]
+    async fn live_kwin_lists_switches_and_streams_virtual_desktops() {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
+        assert_eq!(
+            std::env::var("WAYCONTROL_TEST_LIVE_KWIN").as_deref(),
+            Ok("1"),
+            "this live test must run only in its isolated CI session"
+        );
+        let adapter = KWinAdapter::default();
+        let workspaces = adapter.workspaces().await.expect("query KWin desktops");
+        assert!(
+            workspaces.len() >= 2,
+            "isolated KWin config should define at least two desktops"
+        );
+        let original = workspaces
+            .iter()
+            .find(|workspace| workspace.active)
+            .expect("KWin should expose its current desktop")
+            .id
+            .clone();
+        let target = workspaces
+            .iter()
+            .find(|workspace| !workspace.active)
+            .expect("isolated KWin should expose another desktop")
+            .id
+            .clone();
+        let mut events = BufReader::new(adapter.event_stream().await.expect("subscribe to KWin"));
+
+        adapter
+            .switch_workspace(&target)
+            .await
+            .expect("switch the current KWin desktop");
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let expected = format!("workspace>>{}", target.as_str());
+            let mut line = String::new();
+            loop {
+                line.clear();
+                assert_ne!(
+                    events.read_line(&mut line).await.unwrap(),
+                    0,
+                    "KWin event stream closed"
+                );
+                if line.trim_end() == expected {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("KWin should stream its current desktop signal");
+        assert!(
+            adapter
+                .workspaces()
+                .await
+                .unwrap()
+                .iter()
+                .any(|workspace| workspace.id == target && workspace.active)
+        );
+        adapter
+            .switch_workspace(&original)
+            .await
+            .expect("restore the initial KWin desktop");
+    }
+
     static DBUS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     #[derive(Clone)]

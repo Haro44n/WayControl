@@ -5,6 +5,16 @@ on:
   pull_request:
 
 jobs:
+  kwin-live:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install KWin test compositor and dependencies
+        run: pacman -Syu --noconfirm --needed kwin qt6-wayland dbus rust cargo
+      - name: Exercise KWin adapter in a virtual compositor
+        run: dbus-run-session -- ./scripts/test-kwin-virtual.sh
+
   niri-live:
     runs-on: ubuntu-latest
     container: archlinux:latest
