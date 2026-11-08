@@ -8,7 +8,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -84,6 +86,43 @@ class HomeQuickWorkspaceSwitchTest {
             assertEquals(1, calls.size)
             assertEquals("system.power", calls.single().first)
             assertEquals("suspend", calls.single().second.optString("action"))
+        }
+    }
+
+    @Test
+    fun homeAudioShortcutsStayHiddenWhenBackendIsUnavailable() {
+        composeRule.setContent {
+            MaterialTheme {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    HomeScreen("Connected", false, null, JSONObject(), workspaces(), JSONArray(), null, true) { }
+                }
+            }
+        }
+        composeRule.onNodeWithText("Audio controls unavailable").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Volume +").assertCountEquals(0)
+        composeRule.onNodeWithText("Media controls unavailable").assertIsDisplayed()
+    }
+
+    @Test
+    fun homeMicrophoneMuteShortcutDispatchesTypedAction() {
+        val actions = mutableListOf<Pair<String, JSONObject>>()
+        composeRule.setContent {
+            MaterialTheme {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    HomeScreen(
+                        "Connected", false, null, JSONObject(), workspaces(), JSONArray(), null, true,
+                        audio = JSONObject()
+                            .put("available", true)
+                            .put("output_muted", false)
+                            .put("microphone_muted", true),
+                        action = { operation, payload -> actions += operation to payload },
+                    ) { }
+                }
+            }
+        }
+        composeRule.onNodeWithText("Unmute mic").performClick()
+        composeRule.runOnIdle {
+            assertEquals("audio.microphone_mute", actions.single().first)
         }
     }
 }

@@ -524,16 +524,26 @@ private fun HomeQuickActions(
                     }) { Text(if (enabled) "Turn off $name" else "Turn on $name") }
                 }
             }
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Button(onClick = { action("audio.volume", JSONObject().put("direction", "down")) }) { Text("Volume −") }
-                Button(onClick = { action("audio.volume", JSONObject().put("direction", "up")) }) { Text("Volume +") }
-                val muted = if (audio.has("output_muted") && !audio.isNull("output_muted")) audio.optBoolean("output_muted") else null
-                Button(onClick = { action("audio.output_mute", JSONObject()) }) {
-                    Text(when (muted) { true -> "Unmute"; false -> "Mute"; null -> "Mute toggle" })
+            if (audio.optBoolean("available")) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Button(onClick = { action("audio.volume", JSONObject().put("direction", "down")) }) { Text("Volume −") }
+                    Button(onClick = { action("audio.volume", JSONObject().put("direction", "up")) }) { Text("Volume +") }
+                    val muted = if (audio.has("output_muted") && !audio.isNull("output_muted")) audio.optBoolean("output_muted") else null
+                    Button(onClick = { action("audio.output_mute", JSONObject()) }) {
+                        Text(when (muted) { true -> "Unmute"; false -> "Mute"; null -> "Mute toggle" })
+                    }
+                    val microphoneMuted = if (audio.has("microphone_muted") && !audio.isNull("microphone_muted")) audio.optBoolean("microphone_muted") else null
+                    Button(onClick = { action("audio.microphone_mute", JSONObject()) }) {
+                        Text(when (microphoneMuted) { true -> "Unmute mic"; false -> "Mute mic"; null -> "Mic mute toggle" })
+                    }
                 }
+            } else {
+                Text("Audio controls unavailable", color = SecondaryText)
+            }
+            if (media.optBoolean("available")) {
                 val players = media.optJSONArray("players") ?: JSONArray()
                 val player = players.optJSONObject(0)
                 if (player == null) {
@@ -543,6 +553,8 @@ private fun HomeQuickActions(
                         action("media.play_pause_for", JSONObject().put("player_id", player.optString("player_id")))
                     }) { Text(mediaPlayerPresentation(player).playPauseLabel) }
                 }
+            } else {
+                Text("Media controls unavailable", color = SecondaryText)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { confirmation = "power" to "suspend" }) { Text("Suspend") }
