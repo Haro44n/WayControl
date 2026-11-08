@@ -420,6 +420,8 @@ mod tests {
                                 && item["is_focused"].as_bool() == Some(true)
                         })
                     })
+                    || (event["WorkspaceActivated"]["id"].as_u64() == Some(target_id)
+                        && event["WorkspaceActivated"]["focused"].as_bool() == Some(true))
                 {
                     break;
                 }
