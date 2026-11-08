@@ -59,3 +59,5 @@ The dependency advisory scan, secret scan, and protocol parser fuzz run are reco
 A review of host command execution found that `Command::output()` captured stdout and stderr without a size limit. A noisy or misbehaving allowlisted utility could therefore consume daemon memory, and dropping a timed-out output future did not ensure the child process was killed. Both captured streams now have explicit limits, are drained concurrently, and the child is configured to terminate when the operation is cancelled. Regression tests verify stdout and stderr limit enforcement. Workspace tests and Clippy passed after the fix.
 
 Report suspected vulnerabilities through the project maintainer. Do not expose a LAN-bound service on an untrusted network.
+
+A follow-up source review checked the HTTP body limit, pairing state transitions, bearer authentication and rate limits, event-stream bounds/revocation, Android certificate pinning, and pairing QR validation. It found no additional confirmed issue. This is source-level review; it does not replace independent review or hostile-network testing.
