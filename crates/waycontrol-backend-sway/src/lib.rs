@@ -160,6 +160,7 @@ fn collect_windows(
     out: &mut Vec<Window>,
 ) {
     let kind = node.get("type").and_then(Value::as_str).unwrap_or_default();
+    let floating = floating || kind == "floating_con";
     let workspace = if kind == "workspace" {
         node.get("name").and_then(Value::as_str).or(workspace)
     } else {
@@ -175,7 +176,7 @@ fn collect_windows(
             .and_then(|value| value.get("class"))
             .and_then(Value::as_str)
     });
-    if kind == "con" && app_id.is_some() {
+    if matches!(kind, "con" | "floating_con") && app_id.is_some() {
         if let (Some(id), Some(app_id)) = (node.get("id").and_then(Value::as_u64), app_id) {
             out.push(Window {
                 address: format!("sway:{id}"),
@@ -571,12 +572,14 @@ mod tests {
 
     #[test]
     fn workspace_tree_model_keeps_named_workspace_ids() {
-        let tree: Value = serde_json::from_str(r#"{"type":"workspace","name":"3: web","nodes":[{"id":42,"type":"con","app_id":"firefox","name":"Browser","focused":true,"fullscreen_mode":1,"nodes":[],"floating_nodes":[]}] ,"floating_nodes":[]}"#).unwrap();
+        let tree: Value = serde_json::from_str(r#"{"type":"workspace","name":"3: web","nodes":[{"id":42,"type":"con","app_id":"firefox","name":"Browser","focused":true,"fullscreen_mode":1,"nodes":[],"floating_nodes":[]}],"floating_nodes":[{"id":43,"type":"floating_con","app_id":"terminal","name":"Terminal","focused":false,"fullscreen_mode":0,"nodes":[],"floating_nodes":[]}] }"#).unwrap();
         let mut windows = Vec::new();
         collect_windows(&tree, None, None, false, &mut windows);
         assert_eq!(windows[0].workspace_id.as_ref().unwrap().as_str(), "3: web");
         assert_eq!(windows[0].address, "sway:42");
         assert!(windows[0].focused && windows[0].fullscreen);
+        assert_eq!(windows[1].address, "sway:43");
+        assert!(windows[1].floating);
     }
 
     #[tokio::test]
