@@ -121,6 +121,7 @@ private fun WayControlApp(store: SecureConnectionStore) {
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
     var snapshot by remember { mutableStateOf(RemoteSnapshot()) }
+    var telemetryHistory by remember { mutableStateOf(TelemetryHistory()) }
     var eventCounter by remember { mutableIntStateOf(0) }
     var discoveredServers by remember { mutableStateOf(emptyList<DiscoveredServer>()) }
     var discoveryStatus by remember { mutableStateOf<String?>(null) }
@@ -159,12 +160,16 @@ private fun WayControlApp(store: SecureConnectionStore) {
                             .getOrElse { JSONObject().put("available", false) },
                     )
                 }
+                if (selected == Destination.System) {
+                    telemetryHistory = telemetryHistory.append(telemetrySample(updated.desktop))
+                }
                 snapshot = updated
                 status = "Connected"; error = null
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 snapshot = snapshot.cleared()
+                telemetryHistory = TelemetryHistory()
                 status = "Disconnected"
                 error = e.message ?: "Connection failed"
             }
@@ -224,7 +229,7 @@ private fun WayControlApp(store: SecureConnectionStore) {
                     Destination.Windows -> WindowScreen(snapshot.windows, snapshot.workspaces, status, capabilities) { operation, address, payload ->
                         scope.launch { runCatching { withContext(Dispatchers.IO) { WayControlClient(endpoint, pin, token).request(operation, payload.put("address", address)) } }.onFailure { error = it.message } }
                     }
-                    Destination.System -> SystemScreen(snapshot.desktop, snapshot.monitors, status, capabilities, snapshot.audio, snapshot.media) { operation, payload ->
+                    Destination.System -> SystemScreenWithHistory(snapshot.desktop, snapshot.monitors, status, capabilities, snapshot.audio, snapshot.media, telemetryHistory) { operation, payload ->
                         scope.launch { runCatching { withContext(Dispatchers.IO) { WayControlClient(endpoint, pin, token).request(operation, payload) } }.onFailure { error = it.message } }
                     }
                     Destination.Settings -> SettingsScreen(
@@ -404,7 +409,16 @@ private fun WayControlApp(store: SecureConnectionStore) {
 }
 
 @Composable internal fun SystemScreen(desktop: JSONObject, monitors: JSONArray, status: String, capabilities: CompositorCapabilities = CompositorCapabilities(), audio: JSONObject = JSONObject(), media: JSONObject = JSONObject(), action: (String, JSONObject) -> Unit) {
+    SystemScreenContent(desktop, monitors, status, capabilities, audio, media, TelemetryHistory(), action)
+}
+
+@Composable internal fun SystemScreenWithHistory(desktop: JSONObject, monitors: JSONArray, status: String, capabilities: CompositorCapabilities = CompositorCapabilities(), audio: JSONObject = JSONObject(), media: JSONObject = JSONObject(), history: TelemetryHistory, action: (String, JSONObject) -> Unit) {
+    SystemScreenContent(desktop, monitors, status, capabilities, audio, media, history, action)
+}
+
+@Composable private fun SystemScreenContent(desktop: JSONObject, monitors: JSONArray, status: String, capabilities: CompositorCapabilities, audio: JSONObject, media: JSONObject, history: TelemetryHistory, action: (String, JSONObject) -> Unit) {
     Header("System monitor", status)
+    TelemetryHistoryCharts(history)
     var powerConfirmation by remember { mutableStateOf<String?>(null) }
     var monitorConfirmation by remember { mutableStateOf<String?>(null) }
     val memory = desktop.optJSONObject("memory")

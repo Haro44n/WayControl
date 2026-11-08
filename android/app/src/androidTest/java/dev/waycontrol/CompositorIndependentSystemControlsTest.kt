@@ -20,6 +20,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -30,6 +31,30 @@ import java.util.concurrent.CopyOnWriteArrayList
 class CompositorIndependentSystemControlsTest {
     @get:Rule
     val composeRule = createComposeRule()
+
+    @Test
+    fun telemetryHistoryChartsExposeRecentCpuAndMemorySamples() {
+        val history = TelemetryHistory(
+            samples = listOf(
+                TelemetrySample(cpuPercent = 20.0, memoryPercent = 40.0),
+                TelemetrySample(cpuPercent = 80.0, memoryPercent = 60.0),
+            ),
+        )
+        composeRule.setContent {
+            MaterialTheme {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    SystemScreenWithHistory(
+                        JSONObject(), JSONArray(), "Connected", history = history, action = { _, _ -> },
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithContentDescription("CPU usage history, 2 samples, latest 80.0%")
+            .performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Memory usage history, 2 samples, latest 60.0%")
+            .performScrollTo().assertIsDisplayed()
+    }
 
     @Test
     fun perCoreCpuTemperaturesRenderWithoutCompositorCapabilities() {
@@ -80,7 +105,7 @@ class CompositorIndependentSystemControlsTest {
         composeRule.onNodeWithText("Storage").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("/home").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("/dev/nvme0n1p2 · btrfs").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("72.5% used · 691.9 MiB / 953.7 MiB · 238.4 MiB free")
+        composeRule.onNodeWithText("72.5% used · 691.4 MiB / 953.7 MiB · 238.4 MiB free")
             .performScrollTo().assertIsDisplayed()
     }
 
@@ -118,7 +143,7 @@ class CompositorIndependentSystemControlsTest {
         composeRule.onNodeWithText("Network interfaces").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Up · Default route").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("192.168.1.10 · fe80::1").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("↓ 1.0 KiB/s · ↑ 2.0 KiB/s").performScrollTo().assertIsDisplayed()
+        composeRule.onAllNodesWithText("↓ 1.0 KiB/s · ↑ 2.0 KiB/s").assertCountEquals(2)
     }
 
     @Test
