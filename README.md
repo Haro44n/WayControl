@@ -30,7 +30,7 @@ cd android
 ./gradlew connectedDebugAndroidTest
 ```
 
-The Android suite includes TLS pin and request-envelope unit tests, telemetry interval scheduling, snapshot clearing after disconnect, conservative compositor capability parsing/fetch-plan/navigation tests, and Compose tests for refresh selection, load-average/per-core, storage, network interface, optional GPU metrics, Home workspace switching, capability-gated quick actions, and dangerous-action confirmation.
+The Android suite includes TLS pin and request-envelope unit tests, telemetry interval scheduling, snapshot clearing after disconnect, conservative compositor capability parsing/fetch-plan/navigation tests, and Compose tests for refresh selection, load-average/per-core, storage, network interface, optional GPU metrics, Home workspace switching, capability-gated quick actions, and dangerous-action confirmation. GitHub Actions runs these checks and `connectedDebugAndroidTest` on an Android 16 x86_64 emulator.
 
 The debug APK is written to `android/app/build/outputs/apk/debug/app-debug.apk`. A copy is available at `outputs/WayControl-v0.1.0-debug.apk`; the minified unsigned release build is at `outputs/WayControl-v0.1.0-release-unsigned.apk`. Release signing is intentionally not configured with a checked-in key; configure signing through a private local Gradle configuration before publishing.
 

@@ -78,6 +78,8 @@ Android tooling was provisioned under `work/android-sdk`; Gradle 9.6 and JDK 21 
 
 ## Remaining work
 
+- CI emulator checkpoint (2026-11-08): GitHub Actions run [42482560163](https://github.com/Haro44n/WayControl/actions/runs/42482560163) passed Rust formatting, Clippy with warnings denied, the Rust workspace suite, release build, Android unit tests, lint, debug/release builds, and all Compose instrumentation tests on an Android 16 x86_64 emulator. This moves connected Compose tests into the regular CI workflow; first-run emulator provisioning took 6m30s.
+
 - Run Sway and Niri against live sessions and verify IPC event delivery and all advertised workspace/window actions. Validate KWin workspace queries, switching, and D-Bus event delivery in a live Plasma session. GNOME compositor controls remain unsupported until a supported remote-control interface is available; detection alone does not provide those controls.
 - Run on physical Poco M5 hardware to check OEM Android behavior, keyboard layout, gesture navigation, battery handling, and touch interaction. Emulator coverage is only a close-sized layout and lifecycle check.
 - Verify QR scanning end to end on a Google Play-enabled Android device with a QR printed by `waycontrold pairing-info --qr`; current automated evidence covers payload validation and scan-button dispatch, not camera decoding/runtime module installation. LAN discovery is tested at protocol/parser/UI levels; discovery across a physical Wi-Fi network remains to be verified.
