@@ -2144,7 +2144,9 @@ mod tests {
         body::{Body, to_bytes},
         http::{Request, header},
     };
-    use std::sync::atomic::{AtomicI64, Ordering};
+    use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+
+    static TEST_PATH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
     use tokio::io::{AsyncWriteExt, BufReader};
     use tower::ServiceExt;
 
@@ -2504,8 +2506,11 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path =
-            std::env::temp_dir().join(format!("waycontrol-test-{}-{nonce}", std::process::id()));
+        let sequence = TEST_PATH_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "waycontrol-test-{}-{nonce}-{sequence}",
+            std::process::id()
+        ));
         let power_calls = Arc::new(Mutex::new(Vec::new()));
         let event_peers = Arc::new(Mutex::new(Vec::new()));
         let backend = Arc::new(MockBackend {
