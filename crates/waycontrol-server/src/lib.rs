@@ -2455,6 +2455,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn allowlisted_process_is_killed_when_output_limit_is_exceeded() {
+        let pid_file = std::env::temp_dir().join(format!(
+            "waycontrol-child-{}-{}.pid",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock is after UNIX epoch")
+                .as_nanos()
+        ));
+        let pid_file_arg = format!(
+            "'{}'",
+            pid_file.display().to_string().replace('\'', "'\\''")
+        );
+        let script = format!(
+            "echo $$ > {pid_file_arg}; /usr/bin/head -c 65537 /dev/zero; exec /usr/bin/sleep 30"
+        );
+
+        let error = run_allowlisted_output("/bin/sh", &["-c", &script])
+            .await
+            .expect_err("output over the process limit must be rejected");
+        assert!(error.contains("output limit"), "unexpected error: {error}");
+
+        let pid: u32 = std::fs::read_to_string(&pid_file)
+            .expect("child must write its pid before producing output")
+            .trim()
+            .parse()
+            .expect("child pid must be numeric");
+        let proc_stat = std::path::PathBuf::from(format!("/proc/{pid}/stat"));
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
+        loop {
+            let child_state = std::fs::read_to_string(&proc_stat).ok().and_then(|stat| {
+                stat.rsplit_once(')')
+                    .map(|(_, rest)| rest.trim_start().chars().next())
+            });
+            if child_state.is_none() || child_state == Some(Some('Z')) {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "child process {pid} remained alive after output limit error"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        std::fs::remove_file(pid_file).expect("remove child pid file");
+    }
+
+    #[tokio::test]
     async fn allowlisted_process_stderr_is_bounded() {
         let error = run_allowlisted(
             "/usr/bin/dd",
