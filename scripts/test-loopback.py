@@ -175,6 +175,15 @@ def main():
                 and (item.get("frequency_khz") is None or item["frequency_khz"] > 0)
                 for item in telemetry["cpu_cores"]
             ), "per-core CPU data malformed"
+            core_temperatures = telemetry.get("cpu_core_temperatures")
+            assert isinstance(core_temperatures, list), "per-core CPU temperature list unavailable"
+            assert all(
+                item.get("core_id", -1) >= 0
+                and (item.get("package_id") is None or item["package_id"] >= 0)
+                and -100_000 <= item.get("temperature_millidegrees", -273_151) <= 250_000
+                for item in core_temperatures
+            ), "per-core CPU temperature data malformed"
+            print(f"Per-core CPU temperature sensors: {len(core_temperatures)}")
             status, workspaces = api("workspace.list", "workspaces")
             assert status == 200 and workspaces["success"] and isinstance(workspaces["payload"], list), f"workspace list returned {status}"
             status, windows = api("window.list", "windows")

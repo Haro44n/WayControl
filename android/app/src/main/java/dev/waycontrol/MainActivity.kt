@@ -442,6 +442,20 @@ private fun WayControlApp(store: SecureConnectionStore) {
             if (cpuCores.length() > 32) Text("${cpuCores.length() - 32} more cores", color = SecondaryText)
         }
     }
+    val coreTemperatures = cpuCoreTemperatureRows(
+        desktop.optJSONArray("cpu_core_temperatures") ?: JSONArray(),
+    )
+    if (coreTemperatures.isNotEmpty()) {
+        Card {
+            Text("CPU core temperatures", color = MainText, fontWeight = FontWeight.Medium)
+            coreTemperatures.forEach { temperature ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(temperature.label, color = SecondaryText)
+                    Text(temperature.temperature, color = MainText)
+                }
+            }
+        }
+    }
 
     Text("Controls", color = MainText, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
     Card {

@@ -1615,6 +1615,16 @@ async fn desktop_snapshot(backend: &dyn CompositorBackend) -> Result<Value, Stri
             json!({"id":name,"usage_percent":usage_percent,"frequency_khz":frequency_khz})
         })
         .collect::<Vec<_>>();
+    let cpu_core_temperatures = read_cpu_core_temperatures()
+        .into_iter()
+        .map(|temperature| {
+            json!({
+                "package_id":temperature.package_id,
+                "core_id":temperature.core_id,
+                "temperature_millidegrees":temperature.temperature_millidegrees
+            })
+        })
+        .collect::<Vec<_>>();
     let load_average = std::fs::read_to_string("/proc/loadavg")
         .ok()
         .and_then(|input| waycontrol_telemetry::parse_load_average(&input).ok())
@@ -1640,6 +1650,7 @@ async fn desktop_snapshot(backend: &dyn CompositorBackend) -> Result<Value, Stri
         "cpu_usage_percent":cpu,
         "cpu_frequency_khz":cpu_frequency_khz,
         "cpu_cores":cpu_cores,
+        "cpu_core_temperatures":cpu_core_temperatures,
         "load_average":load_average,
         "memory":memory,
         "network_rates":network_rates,
@@ -1661,6 +1672,65 @@ fn read_cpu_core_frequency_khz(core_id: &str) -> Option<u64> {
         let contents = std::fs::read_to_string(path).ok()?;
         waycontrol_telemetry::parse_cpu_frequency_khz(&contents)
     })
+}
+
+fn read_cpu_core_temperatures() -> Vec<waycontrol_telemetry::CpuCoreTemperature> {
+    let Ok(hwmon_devices) = std::fs::read_dir("/sys/class/hwmon") else {
+        return Vec::new();
+    };
+    let mut temperatures = std::collections::BTreeMap::new();
+
+    for device in hwmon_devices.flatten() {
+        let directory = device.path();
+        if std::fs::read_to_string(directory.join("name"))
+            .map(|name| name.trim() != "coretemp")
+            .unwrap_or(true)
+        {
+            continue;
+        }
+
+        let Ok(files) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        let labels = files
+            .flatten()
+            .filter_map(|entry| {
+                let name = entry.file_name().into_string().ok()?;
+                let index = name.strip_prefix("temp")?.strip_suffix("_label")?;
+                if index.is_empty() || !index.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return None;
+                }
+                let label = std::fs::read_to_string(entry.path()).ok()?;
+                Some((name, label.trim().to_owned()))
+            })
+            .collect::<Vec<_>>();
+        let package_label = labels
+            .iter()
+            .map(|(_, label)| label.as_str())
+            .find(|label| label.starts_with("Package id "));
+
+        for (label_file, label) in &labels {
+            if !label.starts_with("Core ") {
+                continue;
+            }
+            let Some(stem) = label_file.strip_suffix("_label") else {
+                continue;
+            };
+            let Ok(input) = std::fs::read_to_string(directory.join(format!("{stem}_input"))) else {
+                continue;
+            };
+            let Some(temperature) =
+                waycontrol_telemetry::parse_coretemp_temperature(package_label, label, &input)
+            else {
+                continue;
+            };
+            temperatures
+                .entry((temperature.package_id, temperature.core_id))
+                .or_insert(temperature);
+        }
+    }
+
+    temperatures.into_values().collect()
 }
 
 fn gpu_snapshot() -> Value {

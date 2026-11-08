@@ -32,6 +32,30 @@ class CompositorIndependentSystemControlsTest {
     val composeRule = createComposeRule()
 
     @Test
+    fun perCoreCpuTemperaturesRenderWithoutCompositorCapabilities() {
+        val desktop = JSONObject().put(
+            "cpu_core_temperatures",
+            JSONArray().put(
+                JSONObject()
+                    .put("package_id", 0)
+                    .put("core_id", 4)
+                    .put("temperature_millidegrees", 37_250),
+            ),
+        )
+        composeRule.setContent {
+            MaterialTheme {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    SystemScreen(desktop, JSONArray(), "Connected", action = { _, _ -> })
+                }
+            }
+        }
+
+        composeRule.onNodeWithText("CPU core temperatures").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Package 0 · Core 4").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("37.3 °C").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
     fun pairingQrActionIsAvailableAndDispatchesScanRequest() {
         val scanRequested = AtomicReference(false)
         composeRule.setContent {
