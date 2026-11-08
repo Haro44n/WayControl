@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+runtime_dir="$(mktemp -d)"
+niri_pid=""
+xvfb_pid=""
+foot_pid=""
+cleanup() {
+    status=$?
+    if [[ $status -ne 0 ]]; then
+        [[ ! -f "$runtime_dir/niri.log" ]] || cat "$runtime_dir/niri.log"
+    fi
+    for pid in "$foot_pid" "$niri_pid" "$xvfb_pid"; do
+        if [[ -n "$pid" ]]; then
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+        fi
+    done
+    rm -rf "$runtime_dir"
+    exit "$status"
+}
+trap cleanup EXIT
+
+chmod 700 "$runtime_dir"
+export XDG_RUNTIME_DIR="$runtime_dir"
+export XDG_SESSION_TYPE=wayland
+export XDG_CURRENT_DESKTOP=niri
+export DISPLAY=:99
+export LIBGL_ALWAYS_SOFTWARE=1
+unset WAYLAND_DISPLAY NIRI_SOCKET
+
+cat >"$runtime_dir/niri.kdl" <<'EOF'
+workspace "WayControlSource"
+workspace "WayControlTarget"
+EOF
+
+niri validate --config "$runtime_dir/niri.kdl"
+Xvfb "$DISPLAY" -screen 0 1280x720x24 -nolisten tcp >"$runtime_dir/xvfb.log" 2>&1 &
+xvfb_pid=$!
+for _ in $(seq 1 100); do
+    if DISPLAY="$DISPLAY" xdpyinfo >/dev/null 2>&1; then
+        break
+    fi
+    if ! kill -0 "$xvfb_pid" 2>/dev/null; then
+        cat "$runtime_dir/xvfb.log"
+        exit 1
+    fi
+    sleep 0.1
+done
+
+niri --config "$runtime_dir/niri.kdl" >"$runtime_dir/niri.log" 2>&1 &
+niri_pid=$!
+for _ in $(seq 1 200); do
+    ipc_socket="$(find "$runtime_dir" -maxdepth 1 -type s -name 'niri.wayland-*.sock' -print -quit)"
+    wayland_socket="$(find "$runtime_dir" -maxdepth 1 -type s -name 'wayland-*' -print -quit)"
+    if [[ -n "$ipc_socket" && -n "$wayland_socket" ]]; then
+        export NIRI_SOCKET="$ipc_socket"
+        export WAYLAND_DISPLAY="$(basename "$wayland_socket")"
+        break
+    fi
+    if ! kill -0 "$niri_pid" 2>/dev/null; then
+        cat "$runtime_dir/niri.log"
+        exit 1
+    fi
+    sleep 0.1
+done
+if [[ -z "${NIRI_SOCKET:-}" || -z "${WAYLAND_DISPLAY:-}" ]]; then
+    echo "Niri IPC and Wayland sockets did not become ready" >&2
+    exit 1
+fi
+
+ready=false
+for _ in $(seq 1 100); do
+    if niri msg --json outputs >/dev/null 2>&1; then
+        ready=true
+        break
+    fi
+    if ! kill -0 "$niri_pid" 2>/dev/null; then
+        cat "$runtime_dir/niri.log"
+        exit 1
+    fi
+    sleep 0.1
+done
+if [[ "$ready" != true ]]; then
+    echo "Niri IPC did not become ready" >&2
+    exit 1
+fi
+
+foot --app-id WayControlLiveTest --title WayControlLiveTest sh -c 'sleep 300' \
+    >"$runtime_dir/foot.log" 2>&1 &
+foot_pid=$!
+WAYCONTROL_TEST_LIVE_NIRI=1 cargo test -p waycontrol-backend-niri \
+    live_niri_supports_workspace_window_output_event_and_window_actions -- --ignored --nocapture

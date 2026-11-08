@@ -5,6 +5,16 @@ on:
   pull_request:
 
 jobs:
+  niri-live:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Niri test compositor and dependencies
+        run: pacman -Syu --noconfirm --needed niri foot xorg-server-xvfb xorg-xdpyinfo dbus rust cargo
+      - name: Exercise Niri adapter in a nested compositor
+        run: dbus-run-session -- ./scripts/test-niri-winit.sh
+
   sway-live:
     runs-on: ubuntu-latest
     steps:

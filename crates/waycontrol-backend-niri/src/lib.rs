@@ -343,6 +343,145 @@ mod tests {
 
     static NEXT_SOCKET: AtomicU64 = AtomicU64::new(0);
 
+    #[tokio::test]
+    #[ignore = "requires a live Niri compositor and WAYCONTROL_TEST_LIVE_NIRI=1"]
+    async fn live_niri_supports_workspace_window_output_event_and_window_actions() {
+        assert_eq!(
+            std::env::var("WAYCONTROL_TEST_LIVE_NIRI").as_deref(),
+            Ok("1"),
+            "this live test must run only in its isolated CI session"
+        );
+        let adapter = NiriAdapter::from_env().expect("CI should provide NIRI_SOCKET");
+        let monitors = adapter.monitors().await.expect("query Niri outputs");
+        assert!(!monitors.is_empty(), "nested Niri should expose an output");
+        let workspaces = adapter.workspaces().await.expect("query Niri workspaces");
+        assert!(
+            workspaces.len() >= 2,
+            "test config should define named workspaces"
+        );
+        let original = workspaces
+            .iter()
+            .find(|workspace| workspace.active)
+            .expect("Niri should expose a focused workspace")
+            .id
+            .clone();
+        let target = workspaces
+            .iter()
+            .find(|workspace| !workspace.active)
+            .expect("test config should provide another workspace")
+            .id
+            .clone();
+
+        let window = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                if let Ok(windows) = adapter.windows().await {
+                    if let Some(window) = windows
+                        .into_iter()
+                        .find(|window| window.title == "WayControlLiveTest")
+                    {
+                        break window;
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("CI foot window should appear in Niri's window list");
+        assert!(!window.floating, "test window should start tiled");
+
+        let mut events = BufReader::new(
+            adapter
+                .event_stream()
+                .await
+                .expect("subscribe to Niri events"),
+        );
+        adapter
+            .switch_workspace(&target)
+            .await
+            .expect("focus the second named workspace");
+        let target_id = target.as_str().parse::<u64>().unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let mut line = String::new();
+            loop {
+                line.clear();
+                assert_ne!(
+                    events.read_line(&mut line).await.unwrap(),
+                    0,
+                    "Niri event stream closed"
+                );
+                let Ok(event) = serde_json::from_str::<Value>(&line) else {
+                    continue;
+                };
+                if event["WorkspacesChanged"]["workspaces"]
+                    .as_array()
+                    .is_some_and(|items| {
+                        items.iter().any(|item| {
+                            item["id"].as_u64() == Some(target_id)
+                                && item["is_focused"].as_bool() == Some(true)
+                        })
+                    })
+                {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("Niri should stream a state update for the focused workspace");
+        assert!(
+            adapter
+                .workspaces()
+                .await
+                .unwrap()
+                .iter()
+                .any(|workspace| workspace.id == target && workspace.active)
+        );
+
+        adapter
+            .move_window(&window.address, &target)
+            .await
+            .expect("move the test window to the focused workspace");
+        adapter
+            .focus_window(&window.address)
+            .await
+            .expect("focus the test window");
+        adapter
+            .toggle_floating(&window.address)
+            .await
+            .expect("toggle the test window floating state");
+        assert!(
+            adapter
+                .windows()
+                .await
+                .unwrap()
+                .iter()
+                .any(|item| item.address == window.address && item.floating)
+        );
+        adapter
+            .close_window(&window.address)
+            .await
+            .expect("close only the temporary CI window");
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if !adapter
+                    .windows()
+                    .await
+                    .unwrap()
+                    .iter()
+                    .any(|item| item.address == window.address)
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("closed foot window should disappear from Niri's window list");
+        adapter
+            .switch_workspace(&original)
+            .await
+            .expect("restore the initial focused workspace");
+    }
+
     async fn mock_socket() -> (PathBuf, UnixListener) {
         let path = std::env::temp_dir().join(format!(
             "waycontrol-niri-{}-{}.sock",
