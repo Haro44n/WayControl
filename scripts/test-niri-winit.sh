@@ -91,9 +91,23 @@ fi
 foot --app-id=WayControlLiveTest --title=WayControlLiveTest \
     >"$runtime_dir/foot.log" 2>&1 &
 foot_pid=$!
-sleep 0.5
-if ! kill -0 "$foot_pid" 2>/dev/null; then
-    echo "Wayland test client exited before Niri exposed its window" >&2
+window_list=""
+for _ in $(seq 1 100); do
+    window_list="$(niri msg --json windows 2>&1 || true)"
+    if [[ "$window_list" == *"WayControlLiveTest"* ]]; then
+        break
+    fi
+    if ! kill -0 "$foot_pid" 2>/dev/null; then
+        echo "Wayland test client exited before Niri exposed its window" >&2
+        cat "$runtime_dir/foot.log"
+        exit 1
+    fi
+    sleep 0.1
+done
+if [[ "$window_list" != *"WayControlLiveTest"* ]]; then
+    echo "Niri did not expose the Foot test window through its own IPC" >&2
+    echo "$window_list"
+    cat "$runtime_dir/foot.log"
     exit 1
 fi
 WAYCONTROL_TEST_LIVE_NIRI=1 cargo test -p waycontrol-backend-niri \
