@@ -626,10 +626,12 @@ private fun WayControlApp(store: SecureConnectionStore) {
                 if (title.isNotBlank()) Text(title, color = MainText, fontWeight = FontWeight.Medium)
                 val details = listOf(artist, album).filter { it.isNotBlank() }.joinToString(" · ")
                 if (details.isNotBlank()) Text(details, color = SecondaryText)
+                val presentation = mediaPlayerPresentation(player)
+                presentation.positionText?.let { Text(it, color = SecondaryText) }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { action("media.previous", JSONObject().put("player_id", playerId)) }) { Text("Previous") }
-                    Button(onClick = { action("media.play_pause_for", JSONObject().put("player_id", playerId)) }) { Text("Play / pause") }
-                    Button(onClick = { action("media.next", JSONObject().put("player_id", playerId)) }) { Text("Next") }
+                    if (presentation.canGoPrevious) Button(onClick = { action("media.previous", JSONObject().put("player_id", playerId)) }) { Text("Previous") }
+                    if (presentation.showPlayPause) Button(onClick = { action("media.play_pause_for", JSONObject().put("player_id", playerId)) }) { Text(presentation.playPauseLabel) }
+                    if (presentation.canGoNext) Button(onClick = { action("media.next", JSONObject().put("player_id", playerId)) }) { Text("Next") }
                 }
             }
         } else {

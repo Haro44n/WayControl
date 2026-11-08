@@ -351,6 +351,39 @@ class CompositorIndependentSystemControlsTest {
     }
 
     @Test
+    fun mediaControlsRespectPlayerCapabilitiesAndShowTrackPosition() {
+        val playerId = "org.mpris.MediaPlayer2.test"
+        val media = JSONObject().put("available", true).put(
+            "players",
+            JSONArray().put(
+                JSONObject()
+                    .put("player_id", playerId)
+                    .put("name", "test")
+                    .put("playback_status", "Paused")
+                    .put("title", "A track")
+                    .put("can_play", true)
+                    .put("can_pause", false)
+                    .put("can_go_previous", false)
+                    .put("can_go_next", false)
+                    .put("position_ms", 83_000)
+                    .put("duration_ms", 245_000),
+            ),
+        )
+        composeRule.setContent {
+            MaterialTheme {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    SystemScreen(JSONObject(), JSONArray(), "Connected", CompositorCapabilities(), JSONObject(), media) { _, _ -> }
+                }
+            }
+        }
+
+        composeRule.onNodeWithText("1:23 / 4:05").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Play").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Previous").assertDoesNotExist()
+        composeRule.onNodeWithText("Next").assertDoesNotExist()
+    }
+
+    @Test
     fun outputAndInputMenusDispatchOnlyTheirSelectedDeviceIds() {
         val dispatched = CopyOnWriteArrayList<Pair<String, Long>>()
         val audio = JSONObject()

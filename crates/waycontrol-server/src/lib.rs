@@ -211,6 +211,82 @@ pub struct MediaPlayer {
     pub title: String,
     pub artist: String,
     pub album: String,
+    pub can_control: Option<bool>,
+    pub can_play: Option<bool>,
+    pub can_pause: Option<bool>,
+    pub can_go_next: Option<bool>,
+    pub can_go_previous: Option<bool>,
+    pub can_seek: Option<bool>,
+    pub position_ms: Option<u64>,
+    pub duration_ms: Option<u64>,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct MprisPlayerProperties {
+    can_control: Option<bool>,
+    can_play: Option<bool>,
+    can_pause: Option<bool>,
+    can_go_next: Option<bool>,
+    can_go_previous: Option<bool>,
+    can_seek: Option<bool>,
+    position_ms: Option<u64>,
+    duration_ms: Option<u64>,
+}
+
+async fn read_mpris_player_properties(
+    connection: &zbus::Connection,
+    player_id: &str,
+) -> MprisPlayerProperties {
+    const PATH: &str = "/org/mpris/MediaPlayer2";
+    const INTERFACE: &str = "org.mpris.MediaPlayer2.Player";
+    const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
+    let properties: HashMap<String, zbus::zvariant::OwnedValue> =
+        match tokio::time::timeout(Duration::from_millis(250), async {
+            let proxy = zbus::Proxy::new(connection, player_id, PATH, PROPERTIES).await?;
+            proxy.call("GetAll", &(INTERFACE,)).await
+        })
+        .await
+        {
+            Ok(Ok(properties)) => properties,
+            _ => return MprisPlayerProperties::default(),
+        };
+    let property_bool = |name: &str| {
+        properties
+            .get(name)
+            .and_then(|value| bool::try_from(value).ok())
+    };
+    let position_micros = properties
+        .get("Position")
+        .and_then(|value| i64::try_from(value).ok());
+    let metadata: HashMap<String, zbus::zvariant::OwnedValue> = properties
+        .get("Metadata")
+        .and_then(|value| HashMap::try_from(value.clone()).ok())
+        .unwrap_or_default();
+    let duration_micros = metadata
+        .get("mpris:length")
+        .and_then(|value| i64::try_from(value).ok());
+    let mut properties = MprisPlayerProperties {
+        can_control: property_bool("CanControl"),
+        can_play: property_bool("CanPlay"),
+        can_pause: property_bool("CanPause"),
+        can_go_next: property_bool("CanGoNext"),
+        can_go_previous: property_bool("CanGoPrevious"),
+        can_seek: property_bool("CanSeek"),
+        ..MprisPlayerProperties::default()
+    };
+    properties.duration_ms = duration_micros
+        .filter(|duration| *duration > 0)
+        .map(|duration| duration as u64 / 1_000);
+    properties.position_ms = position_micros
+        .filter(|position| *position >= 0)
+        .map(|position| position as u64 / 1_000)
+        .map(|position| {
+            properties
+                .duration_ms
+                .map(|duration| position.min(duration))
+                .unwrap_or(position)
+        });
+    properties
 }
 
 pub enum WaylandBackend {
@@ -470,6 +546,7 @@ impl SystemControlBackend for HostSystemControls {
     }
     async fn media_state(&self) -> Result<MediaState, String> {
         let output = run_allowlisted_output("/usr/bin/playerctl", &["--list-all"]).await?;
+        let mpris_connection = zbus::Connection::session().await.ok();
         let mut players = Vec::new();
         for player_id in parse_playerctl_list(&output) {
             let status =
@@ -497,7 +574,33 @@ impl SystemControlBackend for HostSystemControls {
                 title,
                 artist,
                 album,
+                can_control: None,
+                can_play: None,
+                can_pause: None,
+                can_go_next: None,
+                can_go_previous: None,
+                can_seek: None,
+                position_ms: None,
+                duration_ms: None,
             });
+        }
+        if let Some(connection) = mpris_connection {
+            let properties = futures_util::future::join_all(
+                players
+                    .iter()
+                    .map(|player| read_mpris_player_properties(&connection, &player.player_id)),
+            )
+            .await;
+            for (player, properties) in players.iter_mut().zip(properties) {
+                player.can_control = properties.can_control;
+                player.can_play = properties.can_play;
+                player.can_pause = properties.can_pause;
+                player.can_go_next = properties.can_go_next;
+                player.can_go_previous = properties.can_go_previous;
+                player.can_seek = properties.can_seek;
+                player.position_ms = properties.position_ms;
+                player.duration_ms = properties.duration_ms;
+            }
         }
         Ok(MediaState { players })
     }
@@ -2090,6 +2193,106 @@ pub async fn serve_tls(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    static MPRIS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    struct MockMprisPlayer;
+
+    #[zbus::interface(name = "org.mpris.MediaPlayer2.Player")]
+    impl MockMprisPlayer {
+        #[zbus(property)]
+        fn can_control(&self) -> bool {
+            true
+        }
+
+        #[zbus(property)]
+        fn can_play(&self) -> bool {
+            true
+        }
+
+        #[zbus(property)]
+        fn can_pause(&self) -> bool {
+            false
+        }
+
+        #[zbus(property)]
+        fn can_go_next(&self) -> bool {
+            false
+        }
+
+        #[zbus(property)]
+        fn can_go_previous(&self) -> bool {
+            true
+        }
+
+        #[zbus(property)]
+        fn can_seek(&self) -> bool {
+            true
+        }
+
+        #[zbus(property)]
+        fn position(&self) -> i64 {
+            83_000_000
+        }
+
+        #[zbus(property)]
+        fn metadata(&self) -> HashMap<String, zbus::zvariant::OwnedValue> {
+            HashMap::from([(
+                "mpris:length".to_owned(),
+                zbus::zvariant::OwnedValue::from(245_000_000_i64),
+            )])
+        }
+    }
+
+    #[tokio::test]
+    async fn mpris_player_properties_report_position_and_only_supported_actions() {
+        let _lock = MPRIS_TEST_LOCK.lock().await;
+        const SERVICE: &str = "org.mpris.MediaPlayer2.waycontrol_test";
+        const PATH: &str = "/org/mpris/MediaPlayer2";
+        let _service = zbus::connection::Builder::session()
+            .unwrap()
+            .name(SERVICE)
+            .unwrap()
+            .serve_at(PATH, MockMprisPlayer)
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let connection = zbus::Connection::session().await.unwrap();
+
+        let player = read_mpris_player_properties(&connection, SERVICE).await;
+
+        assert_eq!(Some(true), player.can_control);
+        assert_eq!(Some(true), player.can_play);
+        assert_eq!(Some(false), player.can_pause);
+        assert_eq!(Some(false), player.can_go_next);
+        assert_eq!(Some(true), player.can_go_previous);
+        assert_eq!(Some(true), player.can_seek);
+        assert_eq!(Some(83_000), player.position_ms);
+        assert_eq!(Some(245_000), player.duration_ms);
+        let response = serde_json::to_value(MediaState {
+            players: vec![MediaPlayer {
+                player_id: SERVICE.to_owned(),
+                name: "test".to_owned(),
+                playback_status: "Paused".to_owned(),
+                title: "Track".to_owned(),
+                artist: "Artist".to_owned(),
+                album: "Album".to_owned(),
+                can_control: player.can_control,
+                can_play: player.can_play,
+                can_pause: player.can_pause,
+                can_go_next: player.can_go_next,
+                can_go_previous: player.can_go_previous,
+                can_seek: player.can_seek,
+                position_ms: player.position_ms,
+                duration_ms: player.duration_ms,
+            }],
+        })
+        .unwrap();
+        assert_eq!(json!(false), response["players"][0]["can_go_next"]);
+        assert_eq!(json!(83_000), response["players"][0]["position_ms"]);
+        assert_eq!(json!(245_000), response["players"][0]["duration_ms"]);
+    }
 
     #[test]
     fn gpu_fan_clock_and_power_readings_are_validated() {

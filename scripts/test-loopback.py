@@ -133,6 +133,15 @@ def main():
                 all(isinstance(player.get(field), str) for field in ("player_id", "name", "playback_status", "title", "artist", "album"))
                 for player in players
             ), "MPRIS player metadata has an invalid shape"
+            capability_fields = ("can_control", "can_play", "can_pause", "can_go_next", "can_go_previous", "can_seek")
+            assert all(
+                all(field in player and (player[field] is None or isinstance(player[field], bool)) for field in capability_fields)
+                and all(
+                    field in player and (player[field] is None or isinstance(player[field], int) and not isinstance(player[field], bool))
+                    for field in ("position_ms", "duration_ms")
+                )
+                for player in players
+            ), "MPRIS position or per-player capability fields have an invalid shape"
 
             def event_probe(target_workspace, restore_workspace):
                 connection = http.client.HTTPSConnection("127.0.0.1", PORT, context=tls, timeout=8)

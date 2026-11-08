@@ -1728,6 +1728,7 @@ dependencies = [
  "waycontrol-core",
  "waycontrol-protocol",
  "waycontrol-telemetry",
+ "zbus",
 ]
 
 [[package]]
