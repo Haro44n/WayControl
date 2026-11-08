@@ -122,6 +122,31 @@ class CompositorIndependentSystemControlsTest {
     }
 
     @Test
+    fun optionalGpuFanClockAndPowerLimitRenderWhenAvailable() {
+        val desktop = JSONObject().put(
+            "gpu",
+            JSONObject()
+                .put("available", true)
+                .put("name", "Test GPU")
+                .put("fan_speed_percent", 37)
+                .put("graphics_clock_mhz", 1815)
+                .put("power_limit_watts", 250.0),
+        )
+        composeRule.setContent {
+            MaterialTheme {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    SystemScreen(desktop, JSONArray(), "Connected", action = { _, _ -> })
+                }
+            }
+        }
+
+        composeRule.onNodeWithText("GPU fan").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("37%").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("1815 MHz").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("250.0 W").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
     fun pairingQrActionIsAvailableAndDispatchesScanRequest() {
         val scanRequested = AtomicReference(false)
         composeRule.setContent {

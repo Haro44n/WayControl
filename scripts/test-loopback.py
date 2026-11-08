@@ -263,6 +263,12 @@ def main():
             assert status == 401, f"revoked credential remained accepted: {status}"
 
             gpu = snapshot["payload"].get("gpu", {})
+            fan_speed = gpu.get("fan_speed_percent")
+            graphics_clock = gpu.get("graphics_clock_mhz")
+            power_limit = gpu.get("power_limit_watts")
+            assert fan_speed is None or 0 <= fan_speed <= 100, "GPU fan speed is invalid"
+            assert graphics_clock is None or graphics_clock > 0, "GPU graphics clock is invalid"
+            assert power_limit is None or power_limit > 0, "GPU power limit is invalid"
             print("PASS: pinned-certificate TLS, pairing and local approval, authentication including privileged window control, live telemetry, PipeWire audio state/device lists, MPRIS player discovery/metadata, workspace/window/monitor reads, live Hyprland event stream, same-state workspace/focus controls, reconnect, malformed/oversized requests, missing-window handling, revocation")
             print(f"Host state: {len(workspaces['payload'])} workspaces, {len(windows['payload'])} windows, {len(monitors['payload'])} monitors; GPU available={gpu.get('available')}")
             if live_event:
@@ -277,7 +283,7 @@ def main():
             print(f"Measured telemetry latency: mean {sum(timings)/len(timings):.1f} ms, min {min(timings):.1f} ms, max {max(timings):.1f} ms")
             print(f"Measured reconnect request latency on a fresh TLS connection: {reconnect_latency:.1f} ms")
             if gpu.get("available"):
-                print("NVML sample:", json.dumps({key: gpu.get(key) for key in ("name", "utilization_percent", "temperature_celsius", "vram_used_bytes", "vram_total_bytes", "power_watts")}, sort_keys=True))
+                print("NVML sample:", json.dumps({key: gpu.get(key) for key in ("name", "utilization_percent", "temperature_celsius", "vram_used_bytes", "vram_total_bytes", "power_watts", "fan_speed_percent", "graphics_clock_mhz", "power_limit_watts")}, sort_keys=True))
         finally:
             proc.terminate()
             try:

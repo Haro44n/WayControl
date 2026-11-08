@@ -11,7 +11,10 @@ use axum::{
     },
     routing::{get, post},
 };
-use nvml_wrapper::{Nvml, enum_wrappers::device::TemperatureSensor};
+use nvml_wrapper::{
+    Nvml,
+    enum_wrappers::device::{Clock, TemperatureSensor},
+};
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 use rustls_pki_types::{CertificateDer, pem::PemObject};
 use serde::{Deserialize, Serialize};
@@ -1891,6 +1894,15 @@ fn gpu_snapshot() -> Value {
     };
     let utilization = device.utilization_rates().ok();
     let memory = device.memory_info().ok();
+    let fan_speed_percent = device.fan_speed(0).ok().and_then(gpu_fan_speed_percent);
+    let graphics_clock_mhz = device
+        .clock_info(Clock::Graphics)
+        .ok()
+        .and_then(gpu_clock_mhz);
+    let power_limit_watts = device
+        .power_management_limit()
+        .ok()
+        .and_then(milliwatts_to_watts);
     json!({
         "available":true,
         "name":device.name().ok(),
@@ -1899,8 +1911,23 @@ fn gpu_snapshot() -> Value {
         "temperature_celsius":device.temperature(TemperatureSensor::Gpu).ok(),
         "vram_used_bytes":memory.as_ref().map(|value| value.used),
         "vram_total_bytes":memory.as_ref().map(|value| value.total),
-        "power_watts":device.power_usage().ok().map(|milliwatts| f64::from(milliwatts) / 1000.0)
+        "power_watts":device.power_usage().ok().map(|milliwatts| f64::from(milliwatts) / 1000.0),
+        "fan_speed_percent":fan_speed_percent,
+        "graphics_clock_mhz":graphics_clock_mhz,
+        "power_limit_watts":power_limit_watts
     })
+}
+
+fn gpu_fan_speed_percent(percent: u32) -> Option<u32> {
+    (percent <= 100).then_some(percent)
+}
+
+fn gpu_clock_mhz(megahertz: u32) -> Option<u32> {
+    (megahertz > 0).then_some(megahertz)
+}
+
+fn milliwatts_to_watts(milliwatts: u32) -> Option<f64> {
+    (milliwatts > 0).then_some(f64::from(milliwatts) / 1000.0)
 }
 
 fn bearer(headers: &HeaderMap) -> Option<&str> {
@@ -2063,6 +2090,16 @@ pub async fn serve_tls(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gpu_fan_clock_and_power_readings_are_validated() {
+        assert_eq!(gpu_fan_speed_percent(37), Some(37));
+        assert_eq!(gpu_fan_speed_percent(101), None);
+        assert_eq!(gpu_clock_mhz(1_815), Some(1_815));
+        assert_eq!(gpu_clock_mhz(0), None);
+        assert_eq!(milliwatts_to_watts(250_000), Some(250.0));
+        assert_eq!(milliwatts_to_watts(0), None);
+    }
 
     #[test]
     fn playerctl_mpris_discovery_and_metadata_are_bounded_and_sanitized() {

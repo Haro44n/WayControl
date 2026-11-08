@@ -408,7 +408,7 @@ private fun WayControlApp(store: SecureConnectionStore) {
     var powerConfirmation by remember { mutableStateOf<String?>(null) }
     var monitorConfirmation by remember { mutableStateOf<String?>(null) }
     val memory = desktop.optJSONObject("memory")
-    listOf(
+    val metrics = listOf(
         "CPU utilization" to desktop.optDouble("cpu_usage_percent", Double.NaN).let { if (it.isNaN()) "Unavailable" else "%.1f%%".format(it) },
         "CPU frequency" to desktop.optLong("cpu_frequency_khz", -1).let { if (it < 0) "Unavailable" else "${it / 1000} MHz" }, "Memory used" to (memory?.let { bytes(it.optLong("used_bytes")) } ?: "Unavailable"),
         "Memory total" to (memory?.let { bytes(it.optLong("total_bytes")) } ?: "Unavailable"),
@@ -417,7 +417,8 @@ private fun WayControlApp(store: SecureConnectionStore) {
         "GPU VRAM" to gpuMemory(desktop), "GPU power" to gpuPower(desktop),
         "Network throughput" to networkThroughput(desktop), "Load average" to loadAverageSummary(desktop),
         "Uptime" to desktop.optDouble("uptime_seconds", Double.NaN).let { if (it.isNaN()) "Unavailable" else duration(it) }
-    ).forEach { (title, value) ->
+    ) + gpuOptionalMetricRows(desktop.optJSONObject("gpu")).map { it.label to it.value }
+    metrics.forEach { (title, value) ->
         Card {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(title, color = SecondaryText, modifier = Modifier.weight(1f))
