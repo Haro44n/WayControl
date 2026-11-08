@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -277,7 +278,9 @@ private fun WayControlApp(store: SecureConnectionStore) {
             Column(Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 when (selected) {
-                    Destination.Home -> HomeScreen(status, loading, error, snapshot.desktop, snapshot.workspaces, snapshot.windows, snapshot.networkLatencyMs)
+                    Destination.Home -> HomeScreen(status, loading, error, snapshot.desktop, snapshot.workspaces, snapshot.windows, snapshot.networkLatencyMs, capabilities.switchWorkspace) { id ->
+                        scope.launch { runCatching { withContext(Dispatchers.IO) { WayControlClient(endpoint, pin, token).request("workspace.switch", JSONObject().put("workspace_id", id)) } }.onFailure { error = it.message } }
+                    }
                     Destination.Workspaces -> WorkspaceScreen(snapshot.workspaces, status, capabilities.switchWorkspace) { id ->
                         scope.launch { runCatching { withContext(Dispatchers.IO) { WayControlClient(endpoint, pin, token).request("workspace.switch", JSONObject().put("workspace_id", id)) } }.onFailure { error = it.message } }
                     }
@@ -408,7 +411,7 @@ private fun WayControlApp(store: SecureConnectionStore) {
     }
 }
 
-@Composable private fun HomeScreen(status: String, loading: Boolean, error: String?, desktop: JSONObject, workspaces: JSONArray, windows: JSONArray, networkLatencyMs: Long?) {
+@Composable internal fun HomeScreen(status: String, loading: Boolean, error: String?, desktop: JSONObject, workspaces: JSONArray, windows: JSONArray, networkLatencyMs: Long?, canSwitchWorkspace: Boolean, switchWorkspace: (String) -> Unit) {
     val summary = homeDashboardSummary(desktop, workspaces, windows, networkLatencyMs)
     Header("WayControl", summary.compositor)
     Card {
@@ -427,6 +430,30 @@ private fun WayControlApp(store: SecureConnectionStore) {
             Text(summary.activeWorkspace, color = MainText, fontWeight = FontWeight.Medium)
             Text("Active application", color = SecondaryText)
             Text(summary.activeApplication, color = MainText, fontWeight = FontWeight.Medium)
+        }
+    }
+    Card {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Switch workspace", color = MainText, style = MaterialTheme.typography.titleSmall)
+            if (workspaces.length() == 0) {
+                Text("No workspace data", color = SecondaryText)
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    for (index in 0 until workspaces.length()) {
+                        val workspace = workspaces.optJSONObject(index) ?: continue
+                        val id = workspace.optString("id")
+                        val name = workspace.optString("name").takeIf(String::isNotBlank) ?: id
+                        Button(
+                            onClick = { switchWorkspace(id) },
+                            enabled = canSwitchWorkspace && !workspace.optBoolean("active"),
+                        ) { Text(name) }
+                    }
+                }
+                if (!canSwitchWorkspace) Text("Read only", color = SecondaryText, style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
     Text("Performance", color = MainText, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
