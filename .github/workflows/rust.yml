@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Install Niri test compositor and dependencies
-        run: pacman -Syu --noconfirm --needed niri foot libxcursor libxkbcommon-x11 xorg-server-xvfb xorg-xdpyinfo dbus rust cargo
+        run: pacman -Syu --noconfirm --needed niri foot ttf-dejavu libxcursor libxkbcommon-x11 xorg-server-xvfb xorg-xdpyinfo dbus rust cargo
       - name: Exercise Niri adapter in a nested compositor
         run: dbus-run-session -- ./scripts/test-niri-winit.sh
 

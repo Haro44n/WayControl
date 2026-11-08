@@ -9,6 +9,8 @@ cleanup() {
     status=$?
     if [[ $status -ne 0 ]]; then
         [[ ! -f "$runtime_dir/niri.log" ]] || cat "$runtime_dir/niri.log"
+        [[ ! -f "$runtime_dir/foot.log" ]] || cat "$runtime_dir/foot.log"
+        [[ ! -f "$runtime_dir/xvfb.log" ]] || cat "$runtime_dir/xvfb.log"
     fi
     for pid in "$foot_pid" "$niri_pid" "$xvfb_pid"; do
         if [[ -n "$pid" ]]; then
@@ -86,8 +88,13 @@ if [[ "$ready" != true ]]; then
     exit 1
 fi
 
-foot --app-id WayControlLiveTest --title WayControlLiveTest sh -c 'sleep 300' \
+foot --app-id=WayControlLiveTest --title=WayControlLiveTest \
     >"$runtime_dir/foot.log" 2>&1 &
 foot_pid=$!
+sleep 0.5
+if ! kill -0 "$foot_pid" 2>/dev/null; then
+    echo "Wayland test client exited before Niri exposed its window" >&2
+    exit 1
+fi
 WAYCONTROL_TEST_LIVE_NIRI=1 cargo test -p waycontrol-backend-niri \
     live_niri_supports_workspace_window_output_event_and_window_actions -- --ignored --nocapture
