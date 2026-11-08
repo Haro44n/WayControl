@@ -34,7 +34,7 @@ use thiserror::Error;
 use tokio::net::{UdpSocket, UnixStream};
 use tokio::sync::Mutex;
 use tokio::{
-    io::{AsyncBufRead, AsyncBufReadExt},
+    io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt},
     sync::Semaphore,
 };
 use waycontrol_backend_hyprland::HyprlandAdapter;
@@ -865,17 +865,64 @@ async fn spawn_allowlisted(program: &str, args: &[&str]) -> Result<(), String> {
         .map_err(|error| format!("could not start {program}: {error}"))
 }
 
-async fn run_allowlisted(program: &str, args: &[&str]) -> Result<(), String> {
-    let output = tokio::time::timeout(
-        Duration::from_secs(5),
-        tokio::process::Command::new(program)
-            .args(args)
-            .stdin(std::process::Stdio::null())
-            .output(),
-    )
+const PROCESS_STDOUT_LIMIT: usize = 64 * 1024;
+const PROCESS_STDERR_LIMIT: usize = 8 * 1024;
+
+async fn read_process_pipe<R>(pipe: R, limit: usize, stream: &str) -> Result<Vec<u8>, String>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut bytes = Vec::with_capacity(limit.min(8 * 1024));
+    pipe.take((limit + 1) as u64)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|error| format!("could not read process {stream}: {error}"))?;
+    if bytes.len() > limit {
+        return Err(format!("process {stream} output limit exceeded"));
+    }
+    Ok(bytes)
+}
+
+async fn run_bounded_process(program: &str, args: &[&str]) -> Result<std::process::Output, String> {
+    let mut child = tokio::process::Command::new(program)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|error| format!("could not start {program}: {error}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| format!("could not capture {program} stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| format!("could not capture {program} stderr"))?;
+    let (stdout, stderr, status) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::try_join!(
+            read_process_pipe(stdout, PROCESS_STDOUT_LIMIT, "stdout"),
+            read_process_pipe(stderr, PROCESS_STDERR_LIMIT, "stderr"),
+            async {
+                child
+                    .wait()
+                    .await
+                    .map_err(|error| format!("could not wait for {program}: {error}"))
+            },
+        )
+    })
     .await
-    .map_err(|_| format!("{program} timed out"))?
-    .map_err(|error| format!("could not start {program}: {error}"))?;
+    .map_err(|_| format!("{program} timed out"))??;
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+async fn run_allowlisted(program: &str, args: &[&str]) -> Result<(), String> {
+    let output = run_bounded_process(program, args).await?;
     if output.status.success() {
         Ok(())
     } else {
@@ -884,16 +931,7 @@ async fn run_allowlisted(program: &str, args: &[&str]) -> Result<(), String> {
 }
 
 async fn run_allowlisted_output(program: &str, args: &[&str]) -> Result<String, String> {
-    let output = tokio::time::timeout(
-        Duration::from_secs(5),
-        tokio::process::Command::new(program)
-            .args(args)
-            .stdin(std::process::Stdio::null())
-            .output(),
-    )
-    .await
-    .map_err(|_| format!("{program} timed out"))?
-    .map_err(|error| format!("could not start {program}: {error}"))?;
+    let output = run_bounded_process(program, args).await?;
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     } else {
@@ -2407,6 +2445,31 @@ mod tests {
     use super::*;
 
     static MPRIS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    #[tokio::test]
+    async fn allowlisted_process_output_is_bounded() {
+        let error = run_allowlisted_output("/usr/bin/head", &["-c", "65537", "/dev/zero"])
+            .await
+            .expect_err("output over the process limit must be rejected");
+        assert!(error.contains("output limit"), "unexpected error: {error}");
+    }
+
+    #[tokio::test]
+    async fn allowlisted_process_stderr_is_bounded() {
+        let error = run_allowlisted(
+            "/usr/bin/dd",
+            &[
+                "if=/dev/zero",
+                "of=/dev/stderr",
+                "bs=8193",
+                "count=1",
+                "status=none",
+            ],
+        )
+        .await
+        .expect_err("stderr over the process limit must be rejected");
+        assert!(error.contains("output limit"), "unexpected error: {error}");
+    }
 
     struct MockMprisPlayer;
 
