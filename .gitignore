@@ -2,6 +2,7 @@
 /work/
 /outputs/*.apk
 /outputs/*.pkg.tar.zst
+/outputs/*.tar.gz
 /android/.gradle/
 /android/local.properties
 /android/**/build/
