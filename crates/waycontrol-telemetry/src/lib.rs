@@ -22,6 +22,13 @@ pub struct NetworkRate {
     pub transmitted_bytes_per_second: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CpuCoreTemperature {
+    pub package_id: Option<u32>,
+    pub core_id: u32,
+    pub temperature_millidegrees: i64,
+}
+
 pub fn network_rates(
     previous: &[NetworkInterface],
     current: &[NetworkInterface],
@@ -150,6 +157,36 @@ pub fn parse_cpu_frequency_khz(input: &str) -> Option<u64> {
         .parse::<u64>()
         .ok()
         .filter(|frequency| *frequency > 0)
+}
+
+/// Parse per-core temperature labels and millidegrees Celsius from `coretemp` hwmon.
+pub fn parse_coretemp_temperature(
+    package_label: Option<&str>,
+    core_label: &str,
+    input: &str,
+) -> Option<CpuCoreTemperature> {
+    let package_id = match package_label {
+        Some(label) => Some(parse_hwmon_id(label, "Package id ")?),
+        None => None,
+    };
+    let core_id = parse_hwmon_id(core_label, "Core ")?;
+    let temperature_millidegrees = input.trim().parse::<i64>().ok()?;
+    if !(-100_000..=250_000).contains(&temperature_millidegrees) {
+        return None;
+    }
+    Some(CpuCoreTemperature {
+        package_id,
+        core_id,
+        temperature_millidegrees,
+    })
+}
+
+fn parse_hwmon_id(label: &str, prefix: &str) -> Option<u32> {
+    let id = label.strip_prefix(prefix)?;
+    if id.is_empty() || !id.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    id.parse().ok()
 }
 
 /// Calculate utilization between two cumulative samples. First/unchanged samples have no rate.
@@ -306,5 +343,38 @@ mod tests {
         assert_eq!(parse_cpu_frequency_khz("2400000\n"), Some(2_400_000));
         assert_eq!(parse_cpu_frequency_khz("0\n"), None);
         assert_eq!(parse_cpu_frequency_khz("unavailable\n"), None);
+    }
+
+    #[test]
+    fn parses_valid_per_core_temperatures_and_package_labels() {
+        assert_eq!(
+            parse_coretemp_temperature(Some("Package id 1"), "Core 12", "42875\n"),
+            Some(CpuCoreTemperature {
+                package_id: Some(1),
+                core_id: 12,
+                temperature_millidegrees: 42_875,
+            })
+        );
+        assert_eq!(
+            parse_coretemp_temperature(None, "Core 3", "39000\n"),
+            Some(CpuCoreTemperature {
+                package_id: None,
+                core_id: 3,
+                temperature_millidegrees: 39_000,
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_coretemp_labels_and_out_of_range_temperatures() {
+        for (package, core, value) in [
+            (Some("Package id x"), "Core 0", "39000"),
+            (Some("Package id 0"), "Package id 0", "39000"),
+            (Some("Package id 0"), "Core -1", "39000"),
+            (Some("Package id 0"), "Core 0", "not-a-temperature"),
+            (Some("Package id 0"), "Core 0", "300000"),
+        ] {
+            assert_eq!(parse_coretemp_temperature(package, core, value), None);
+        }
     }
 }
