@@ -278,7 +278,14 @@ private fun WayControlApp(store: SecureConnectionStore) {
             Column(Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 when (selected) {
-                    Destination.Home -> HomeScreen(status, loading, error, snapshot.desktop, snapshot.workspaces, snapshot.windows, snapshot.networkLatencyMs, capabilities.switchWorkspace) { id ->
+                    Destination.Home -> HomeScreen(
+                        status, loading, error, snapshot.desktop, snapshot.workspaces, snapshot.windows,
+                        snapshot.networkLatencyMs, capabilities.switchWorkspace, capabilities,
+                        snapshot.monitors, snapshot.audio, snapshot.media,
+                        action = { operation, payload ->
+                            scope.launch { runCatching { withContext(Dispatchers.IO) { WayControlClient(endpoint, pin, token).request(operation, payload) } }.onFailure { error = it.message } }
+                        },
+                    ) { id ->
                         scope.launch { runCatching { withContext(Dispatchers.IO) { WayControlClient(endpoint, pin, token).request("workspace.switch", JSONObject().put("workspace_id", id)) } }.onFailure { error = it.message } }
                     }
                     Destination.Workspaces -> WorkspaceScreen(snapshot.workspaces, status, capabilities.switchWorkspace) { id ->
@@ -411,7 +418,22 @@ private fun WayControlApp(store: SecureConnectionStore) {
     }
 }
 
-@Composable internal fun HomeScreen(status: String, loading: Boolean, error: String?, desktop: JSONObject, workspaces: JSONArray, windows: JSONArray, networkLatencyMs: Long?, canSwitchWorkspace: Boolean, switchWorkspace: (String) -> Unit) {
+@Composable internal fun HomeScreen(
+    status: String,
+    loading: Boolean,
+    error: String?,
+    desktop: JSONObject,
+    workspaces: JSONArray,
+    windows: JSONArray,
+    networkLatencyMs: Long?,
+    canSwitchWorkspace: Boolean,
+    capabilities: CompositorCapabilities = CompositorCapabilities(),
+    monitors: JSONArray = JSONArray(),
+    audio: JSONObject = JSONObject(),
+    media: JSONObject = JSONObject(),
+    action: (String, JSONObject) -> Unit = { _, _ -> },
+    switchWorkspace: (String) -> Unit,
+) {
     val summary = homeDashboardSummary(desktop, workspaces, windows, networkLatencyMs)
     Header("WayControl", summary.compositor)
     Card {
@@ -456,6 +478,7 @@ private fun WayControlApp(store: SecureConnectionStore) {
             }
         }
     }
+    HomeQuickActions(capabilities, monitors, audio, media, action)
     Text("Performance", color = MainText, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Metric("CPU", desktop.optDouble("cpu_usage_percent", Double.NaN).let { if (it.isNaN()) "Unavailable" else "%.1f%%".format(it) }, Modifier.weight(1f))
@@ -472,6 +495,80 @@ private fun WayControlApp(store: SecureConnectionStore) {
         Text("Workspaces", color = MainText, style = MaterialTheme.typography.titleSmall)
         Text(if (workspaces.length() == 0) "No workspace data" else "${workspaces.length()} workspaces available", color = SecondaryText)
     } }
+}
+
+@Composable
+private fun HomeQuickActions(
+    capabilities: CompositorCapabilities,
+    monitors: JSONArray,
+    audio: JSONObject,
+    media: JSONObject,
+    action: (String, JSONObject) -> Unit,
+) {
+    var confirmation by remember { mutableStateOf<Pair<String, String>?>(null) }
+    Card {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Quick actions", color = MainText, style = MaterialTheme.typography.titleSmall)
+            if (capabilities.lockScreen || capabilities.monitorPower) Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (capabilities.lockScreen) Button(onClick = { action("system.lock", JSONObject()) }) { Text("Lock") }
+                if (capabilities.monitorPower) for (index in 0 until monitors.length()) {
+                    val monitor = monitors.optJSONObject(index) ?: continue
+                    val name = monitor.optString("name")
+                    val enabled = monitor.optBoolean("dpms_enabled", true)
+                    Button(onClick = {
+                        if (enabled) confirmation = "monitor" to name
+                        else action("monitor.power", JSONObject().put("monitor", name).put("enabled", true))
+                    }) { Text(if (enabled) "Turn off $name" else "Turn on $name") }
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Button(onClick = { action("audio.volume", JSONObject().put("direction", "down")) }) { Text("Volume −") }
+                Button(onClick = { action("audio.volume", JSONObject().put("direction", "up")) }) { Text("Volume +") }
+                val muted = if (audio.has("output_muted") && !audio.isNull("output_muted")) audio.optBoolean("output_muted") else null
+                Button(onClick = { action("audio.output_mute", JSONObject()) }) {
+                    Text(when (muted) { true -> "Unmute"; false -> "Mute"; null -> "Mute toggle" })
+                }
+                val players = media.optJSONArray("players") ?: JSONArray()
+                val player = players.optJSONObject(0)
+                if (player == null) {
+                    Button(onClick = { action("media.play_pause", JSONObject()) }) { Text("Play / pause") }
+                } else if (mediaPlayerPresentation(player).showPlayPause) {
+                    Button(onClick = {
+                        action("media.play_pause_for", JSONObject().put("player_id", player.optString("player_id")))
+                    }) { Text(mediaPlayerPresentation(player).playPauseLabel) }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { confirmation = "power" to "suspend" }) { Text("Suspend") }
+                Button(onClick = { confirmation = "power" to "reboot" }) { Text("Reboot") }
+                Button(onClick = { confirmation = "power" to "shutdown" }) { Text("Shut down") }
+            }
+        }
+    }
+    confirmation?.let { (kind, value) ->
+        val label = if (kind == "monitor") "Turn off" else value.replaceFirstChar { it.uppercase() }
+        AlertDialog(
+            onDismissRequest = { confirmation = null },
+            title = { Text(if (kind == "monitor") "Turn off $value?" else "$label this computer?") },
+            text = {
+                Text(if (kind == "monitor") "The display will remain off until it is turned back on or the session wakes it." else "This will interrupt desktop activity. Confirm only if you intend to continue.")
+            },
+            confirmButton = {
+                Button(onClick = {
+                    if (kind == "monitor") action("monitor.power", JSONObject().put("monitor", value).put("enabled", false))
+                    else action("system.power", JSONObject().put("action", value))
+                    confirmation = null
+                }) { Text(if (kind == "monitor") label else "Confirm $label") }
+            },
+            dismissButton = { Button(onClick = { confirmation = null }) { Text("Cancel") } },
+        )
+    }
 }
 
 @Composable private fun WorkspaceScreen(items: JSONArray, status: String, canSwitch: Boolean, switch: (String) -> Unit) {

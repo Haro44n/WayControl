@@ -58,4 +58,32 @@ class HomeQuickWorkspaceSwitchTest {
 
         composeRule.onNodeWithText("Code").performScrollTo().assertIsNotEnabled()
     }
+
+    @Test
+    fun homePowerActionRequiresConfirmationAndCancelDoesNotDispatch() {
+        val calls = mutableListOf<Pair<String, JSONObject>>()
+        composeRule.setContent {
+            MaterialTheme {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    HomeScreen(
+                        "Connected", false, null, JSONObject(), workspaces(), JSONArray(), null, true,
+                        action = { operation, payload -> calls += operation to payload },
+                    ) { }
+                }
+            }
+        }
+
+        composeRule.onNodeWithText("Suspend").performClick()
+        composeRule.onNodeWithText("Suspend this computer?").assertIsDisplayed()
+        composeRule.onNodeWithText("Cancel").performClick()
+        composeRule.runOnIdle { assertEquals(0, calls.size) }
+
+        composeRule.onNodeWithText("Suspend").performClick()
+        composeRule.onNodeWithText("Confirm Suspend").performClick()
+        composeRule.runOnIdle {
+            assertEquals(1, calls.size)
+            assertEquals("system.power", calls.single().first)
+            assertEquals("suspend", calls.single().second.optString("action"))
+        }
+    }
 }
