@@ -24,7 +24,7 @@ Rename WayControl to **WayControl** and evolve the existing Android companion an
 
 - Add a focused `waycontrol-compositor` crate for serializable compositor identity/capability models, detection, and the async compositor API.
 - Inject host system controls separately from compositor workspace/window/monitor operations. The existing allowlisted power/audio/media commands remain host services and do not depend on compositor identity; screen locking is a compositor capability because the current implementation uses `hyprlock`.
-- Represent adapters as `WaylandBackend::Hyprland`, `WaylandBackend::Sway`, `WaylandBackend::Niri`, or an explicitly unsupported detected backend. Unsupported adapters report all compositor capabilities as false and return an explicit unsupported error if called. Sway and Niri capabilities are fixture-tested but still need live session checks.
+- Represent adapters as `WaylandBackend::Hyprland`, `WaylandBackend::Sway`, `WaylandBackend::Niri`, or an explicitly unsupported detected backend. Unsupported adapters report all compositor capabilities as false and return an explicit unsupported error if called. Sway and Niri capabilities have fixture coverage and isolated CI compositor checks; a user's live session remains to be checked.
 - Keep common `/proc` and NVML telemetry outside compositor adapters.
 - Extend the authenticated desktop information response with additive `compositor` and `capabilities` fields. Existing telemetry fields stay unchanged.
 - Android filters compositor-specific destinations/actions using the negotiated capabilities; Home, System, and Settings remain available independently.
