@@ -40,13 +40,35 @@ impl KWinAdapter {
     }
 }
 
-fn map_desktops(desktops: Vec<(i32, String, String)>, current: &str) -> Vec<Workspace> {
+async fn read_desktops(proxy: &GenericProxy<'_>) -> Result<Vec<(u32, String, String)>, String> {
+    if let Ok(desktops) = proxy
+        .get_property::<Vec<(u32, String, String)>>("desktops")
+        .await
+    {
+        return Ok(desktops);
+    }
+
+    let desktops: Vec<(i32, String, String)> = proxy
+        .get_property("desktops")
+        .await
+        .map_err(|error| format!("could not read KWin virtual desktops: {error}"))?;
+    desktops
+        .into_iter()
+        .map(|(position, id, name)| {
+            let position = u32::try_from(position)
+                .map_err(|_| "KWin returned a negative desktop position".to_owned())?;
+            Ok((position, id, name))
+        })
+        .collect()
+}
+
+fn map_desktops(desktops: Vec<(u32, String, String)>, current: &str) -> Vec<Workspace> {
     desktops
         .into_iter()
         .map(|(position, id, name)| Workspace {
             id: WorkspaceId::new(format!("kwin:{id}")),
             name: if name.is_empty() {
-                format!("Desktop {}", position.saturating_add(1).max(1))
+                format!("Desktop {}", position.saturating_add(1))
             } else {
                 name
             },
@@ -75,10 +97,7 @@ impl CompositorBackend for KWinAdapter {
     async fn workspaces(&self) -> Result<Vec<Workspace>, String> {
         let connection = self.connection().await?;
         let proxy = Self::proxy(&connection).await?;
-        let desktops: Vec<(i32, String, String)> = proxy
-            .get_property("desktops")
-            .await
-            .map_err(|error| format!("could not read KWin virtual desktops: {error}"))?;
+        let desktops = read_desktops(&proxy).await?;
         let current: String = proxy
             .get_property("current")
             .await
@@ -94,10 +113,7 @@ impl CompositorBackend for KWinAdapter {
             .ok_or_else(|| "invalid KWin desktop ID".to_owned())?;
         let connection = self.connection().await?;
         let proxy = Self::proxy(&connection).await?;
-        let desktops: Vec<(i32, String, String)> = proxy
-            .get_property("desktops")
-            .await
-            .map_err(|error| format!("could not read KWin virtual desktops: {error}"))?;
+        let desktops = read_desktops(&proxy).await?;
         if !desktops
             .iter()
             .any(|(_, desktop_id, _)| desktop_id == raw_id)
@@ -333,8 +349,8 @@ mod tests {
     fn desktop_mapping_preserves_kwin_ids_and_active_state() {
         let workspaces = map_desktops(
             vec![
-                (0, "desk-a".into(), "Main".into()),
-                (1, "desk-b".into(), String::new()),
+                (0_u32, "desk-a".into(), "Main".into()),
+                (1_u32, "desk-b".into(), String::new()),
             ],
             "desk-b",
         );

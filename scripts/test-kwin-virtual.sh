@@ -7,9 +7,6 @@ cleanup() {
     status=$?
     if [[ $status -ne 0 ]]; then
         [[ ! -f "$runtime_dir/kwin.log" ]] || cat "$runtime_dir/kwin.log"
-        for diagnostic in kwin-introspection.xml kwin-desktops-property.txt kwin-current-property.txt; do
-            [[ ! -f "$runtime_dir/$diagnostic" ]] || cat "$runtime_dir/$diagnostic"
-        done
     fi
     if [[ -n "$kwin_pid" ]]; then
         kill "$kwin_pid" 2>/dev/null || true
@@ -62,17 +59,6 @@ if [[ "$ready" != true ]]; then
     echo "KWin virtual desktop D-Bus API did not become ready" >&2
     exit 1
 fi
-
-dbus-send --session --print-reply --dest=org.kde.KWin /VirtualDesktopManager \
-    org.freedesktop.DBus.Introspectable.Introspect >"$runtime_dir/kwin-introspection.xml"
-dbus-send --session --print-reply --dest=org.kde.KWin /VirtualDesktopManager \
-    org.freedesktop.DBus.Properties.Get \
-    string:org.kde.KWin.VirtualDesktopManager string:desktops \
-    >"$runtime_dir/kwin-desktops-property.txt"
-dbus-send --session --print-reply --dest=org.kde.KWin /VirtualDesktopManager \
-    org.freedesktop.DBus.Properties.Get \
-    string:org.kde.KWin.VirtualDesktopManager string:current \
-    >"$runtime_dir/kwin-current-property.txt"
 
 WAYCONTROL_TEST_LIVE_KWIN=1 cargo test -p waycontrol-backend-kwin \
     live_kwin_lists_switches_and_streams_virtual_desktops -- --ignored --nocapture
