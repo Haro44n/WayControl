@@ -62,6 +62,11 @@ pub enum Operation {
     MediaPlayPause,
     #[serde(rename = "media.info")]
     MediaInfo,
+    #[serde(rename = "media.artwork")]
+    MediaArtwork {
+        player_id: String,
+        artwork_id: String,
+    },
     #[serde(rename = "media.play_pause_for")]
     MediaPlayPauseFor { player_id: String },
     #[serde(rename = "media.next")]
@@ -128,6 +133,8 @@ pub enum ProtocolError {
     InvalidVolumePercent,
     #[error("media player id is invalid")]
     InvalidMediaPlayerId,
+    #[error("media artwork id is invalid")]
+    InvalidMediaArtworkId,
 }
 
 impl RequestEnvelope {
@@ -193,7 +200,8 @@ impl RequestEnvelope {
         let player_id = match &self.operation {
             Operation::MediaPlayPauseFor { player_id }
             | Operation::MediaNext { player_id }
-            | Operation::MediaPrevious { player_id } => Some(player_id),
+            | Operation::MediaPrevious { player_id }
+            | Operation::MediaArtwork { player_id, .. } => Some(player_id),
             _ => None,
         };
         if let Some(player_id) = player_id
@@ -204,6 +212,14 @@ impl RequestEnvelope {
                     .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')))
         {
             return Err(ProtocolError::InvalidMediaPlayerId);
+        }
+        if let Operation::MediaArtwork { artwork_id, .. } = &self.operation
+            && (artwork_id.len() != 64
+                || !artwork_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
+        {
+            return Err(ProtocolError::InvalidMediaArtworkId);
         }
         Ok(())
     }
@@ -387,6 +403,21 @@ mod tests {
         let info: RequestEnvelope =
             serde_json::from_str(r#"{"version":1,"id":"media","type":"media.info"}"#).unwrap();
         assert_eq!(info.operation, Operation::MediaInfo);
+
+        let artwork: RequestEnvelope = serde_json::from_str(&format!(
+            r#"{{"version":1,"id":"art","type":"media.artwork","payload":{{"player_id":"org.mpris.MediaPlayer2.test","artwork_id":"{}"}}}}"#,
+            "a".repeat(64)
+        ))
+        .unwrap();
+        assert!(artwork.validate().is_ok());
+        let invalid_artwork: RequestEnvelope = serde_json::from_str(
+            r#"{"version":1,"id":"art","type":"media.artwork","payload":{"player_id":"org.mpris.MediaPlayer2.test","artwork_id":"../../etc/passwd"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            invalid_artwork.validate(),
+            Err(ProtocolError::InvalidMediaArtworkId)
+        );
 
         for (type_name, operation) in [
             (

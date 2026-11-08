@@ -11,6 +11,7 @@ use axum::{
     },
     routing::{get, post},
 };
+use base64::Engine as _;
 use nvml_wrapper::{
     Nvml,
     enum_wrappers::device::{Clock, TemperatureSensor},
@@ -57,6 +58,7 @@ const API_REQUESTS_PER_DEVICE_PER_SECOND: u16 = 30;
 const EVENT_REAUTH_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_EVENT_BYTES: usize = 8192;
 const MAX_MPRIS_PLAYERS: usize = 16;
+const MAX_ARTWORK_BYTES: u64 = 512 * 1024;
 pub const LAN_DISCOVERY_PORT: u16 = 8766;
 pub const LAN_DISCOVERY_PROBE: &[u8] = b"WAYCONTROL_DISCOVER_V1";
 const LAN_DISCOVERY_RATE_LIMIT: Duration = Duration::from_secs(1);
@@ -177,6 +179,11 @@ pub trait SystemControlBackend: Send + Sync + 'static {
     async fn toggle_microphone_mute(&self) -> Result<(), String>;
     async fn media_play_pause(&self) -> Result<(), String>;
     async fn media_state(&self) -> Result<MediaState, String>;
+    async fn media_artwork(
+        &self,
+        player_id: &str,
+        artwork_id: &str,
+    ) -> Result<MediaArtwork, String>;
     async fn media_play_pause_for(&self, player_id: &str) -> Result<(), String>;
     async fn media_next(&self, player_id: &str) -> Result<(), String>;
     async fn media_previous(&self, player_id: &str) -> Result<(), String>;
@@ -219,9 +226,18 @@ pub struct MediaPlayer {
     pub can_seek: Option<bool>,
     pub position_ms: Option<u64>,
     pub duration_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artwork_id: Option<String>,
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MediaArtwork {
+    pub artwork_id: String,
+    pub mime_type: String,
+    pub data_base64: String,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 struct MprisPlayerProperties {
     can_control: Option<bool>,
     can_play: Option<bool>,
@@ -231,6 +247,7 @@ struct MprisPlayerProperties {
     can_seek: Option<bool>,
     position_ms: Option<u64>,
     duration_ms: Option<u64>,
+    art_url: Option<String>,
 }
 
 async fn read_mpris_player_properties(
@@ -265,6 +282,9 @@ async fn read_mpris_player_properties(
     let duration_micros = metadata
         .get("mpris:length")
         .and_then(|value| i64::try_from(value).ok());
+    let art_url = metadata
+        .get("mpris:artUrl")
+        .and_then(|value| String::try_from(value.clone()).ok());
     let mut properties = MprisPlayerProperties {
         can_control: property_bool("CanControl"),
         can_play: property_bool("CanPlay"),
@@ -286,7 +306,79 @@ async fn read_mpris_player_properties(
                 .map(|duration| position.min(duration))
                 .unwrap_or(position)
         });
+    properties.art_url = art_url;
     properties
+}
+
+fn decode_file_art_url(uri: &str) -> Option<PathBuf> {
+    let encoded = uri.strip_prefix("file:///")?;
+    if encoded.contains('?') || encoded.contains('#') || encoded.is_empty() {
+        return None;
+    }
+    let mut decoded = Vec::with_capacity(encoded.len());
+    let bytes = encoded.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let pair = bytes.get(index + 1..index + 3)?;
+            let hex = std::str::from_utf8(pair).ok()?;
+            decoded.push(u8::from_str_radix(hex, 16).ok()?);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    let path = String::from_utf8(decoded).ok()?;
+    if path.contains('\0') {
+        return None;
+    }
+    Some(PathBuf::from(format!("/{path}")))
+}
+
+async fn allowed_artwork_path(uri: &str) -> Option<PathBuf> {
+    let path = decode_file_art_url(uri)?;
+    let canonical = tokio::fs::canonicalize(path).await.ok()?;
+    let mut roots = Vec::new();
+    if let Some(cache) = std::env::var_os("XDG_CACHE_HOME").filter(|value| !value.is_empty()) {
+        roots.push(PathBuf::from(cache));
+    }
+    if let Some(home) = std::env::var_os("HOME").filter(|value| !value.is_empty()) {
+        roots.push(PathBuf::from(home).join(".cache"));
+    }
+    let mut allowed = false;
+    for root in roots {
+        if let Ok(root) = tokio::fs::canonicalize(root).await
+            && canonical.starts_with(root)
+        {
+            allowed = true;
+            break;
+        }
+    }
+    if !allowed {
+        return None;
+    }
+    let metadata = tokio::fs::metadata(&canonical).await.ok()?;
+    (metadata.is_file() && metadata.len() > 0 && metadata.len() <= MAX_ARTWORK_BYTES)
+        .then_some(canonical)
+}
+
+fn artwork_id(uri: &str) -> String {
+    hex::encode(Sha256::digest(uri.as_bytes()))
+}
+
+fn artwork_mime_type(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.starts_with(b"\xff\xd8\xff") {
+        Some("image/jpeg")
+    } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        Some("image/webp")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else {
+        None
+    }
 }
 
 pub enum WaylandBackend {
@@ -582,6 +674,7 @@ impl SystemControlBackend for HostSystemControls {
                 can_seek: None,
                 position_ms: None,
                 duration_ms: None,
+                artwork_id: None,
             });
         }
         if let Some(connection) = mpris_connection {
@@ -600,9 +693,59 @@ impl SystemControlBackend for HostSystemControls {
                 player.can_seek = properties.can_seek;
                 player.position_ms = properties.position_ms;
                 player.duration_ms = properties.duration_ms;
+                if let Some(uri) = properties.art_url
+                    && allowed_artwork_path(&uri).await.is_some()
+                {
+                    player.artwork_id = Some(artwork_id(&uri));
+                }
             }
         }
         Ok(MediaState { players })
+    }
+    async fn media_artwork(
+        &self,
+        player_id: &str,
+        requested_artwork_id: &str,
+    ) -> Result<MediaArtwork, String> {
+        if !valid_playerctl_id(player_id) || requested_artwork_id.len() != 64 {
+            return Err("Artwork is unavailable".to_owned());
+        }
+        let connection = zbus::Connection::session()
+            .await
+            .map_err(|_| "Artwork is unavailable".to_owned())?;
+        let properties = read_mpris_player_properties(&connection, player_id).await;
+        let uri = properties
+            .art_url
+            .ok_or_else(|| "Artwork is unavailable".to_owned())?;
+        let id = artwork_id(&uri);
+        if id != requested_artwork_id {
+            return Err("Artwork is unavailable".to_owned());
+        }
+        let path = allowed_artwork_path(&uri)
+            .await
+            .ok_or_else(|| "Artwork is unavailable".to_owned())?;
+        use tokio::io::AsyncReadExt;
+        let file = tokio::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)
+            .await
+            .map_err(|_| "Artwork is unavailable".to_owned())?;
+        let mut bytes = Vec::new();
+        file.take(MAX_ARTWORK_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(|_| "Artwork is unavailable".to_owned())?;
+        if bytes.is_empty() || bytes.len() as u64 > MAX_ARTWORK_BYTES {
+            return Err("Artwork is unavailable".to_owned());
+        }
+        let mime_type =
+            artwork_mime_type(&bytes).ok_or_else(|| "Artwork is unavailable".to_owned())?;
+        Ok(MediaArtwork {
+            artwork_id: id,
+            mime_type: mime_type.to_owned(),
+            data_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+        })
     }
     async fn media_play_pause_for(&self, player_id: &str) -> Result<(), String> {
         self.control_player(player_id, "play-pause").await
@@ -1622,6 +1765,15 @@ async fn request(
             .map(|()| json!({})),
         Operation::MediaPlayPause => state.0.system.media_play_pause().await.map(|()| json!({})),
         Operation::MediaInfo => state.0.system.media_state().await.map(|media| json!(media)),
+        Operation::MediaArtwork {
+            player_id,
+            artwork_id,
+        } => state
+            .0
+            .system
+            .media_artwork(&player_id, &artwork_id)
+            .await
+            .map(|artwork| json!(artwork)),
         Operation::MediaPlayPauseFor { player_id } => state
             .0
             .system
@@ -2286,12 +2438,34 @@ mod tests {
                 can_seek: player.can_seek,
                 position_ms: player.position_ms,
                 duration_ms: player.duration_ms,
+                artwork_id: None,
             }],
         })
         .unwrap();
         assert_eq!(json!(false), response["players"][0]["can_go_next"]);
         assert_eq!(json!(83_000), response["players"][0]["position_ms"]);
         assert_eq!(json!(245_000), response["players"][0]["duration_ms"]);
+    }
+
+    #[test]
+    fn artwork_urls_are_local_file_uris_and_image_data_is_sniffed() {
+        assert_eq!(
+            Some(PathBuf::from("/home/user/.cache/cover art.png")),
+            decode_file_art_url("file:///home/user/.cache/cover%20art.png"),
+        );
+        assert_eq!(None, decode_file_art_url("https://example.test/cover.png"));
+        assert_eq!(None, decode_file_art_url("file://remote/.cache/cover.png"));
+        assert_eq!(
+            None,
+            decode_file_art_url("file:///tmp/cover.png?download=1")
+        );
+        assert_eq!(
+            Some("image/png"),
+            artwork_mime_type(b"\x89PNG\r\n\x1a\nrest")
+        );
+        assert_eq!(Some("image/jpeg"), artwork_mime_type(b"\xff\xd8\xffrest"));
+        assert_eq!(None, artwork_mime_type(b"not an image"));
+        assert_eq!(64, artwork_id("file:///a").len());
     }
 
     #[test]
@@ -2713,6 +2887,9 @@ mod tests {
             Ok(MediaState {
                 players: Vec::new(),
             })
+        }
+        async fn media_artwork(&self, _: &str, _: &str) -> Result<MediaArtwork, String> {
+            Err("Artwork is unavailable".to_owned())
         }
         async fn media_play_pause_for(&self, _: &str) -> Result<(), String> {
             Ok(())

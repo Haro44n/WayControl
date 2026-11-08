@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
@@ -49,6 +51,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -122,6 +127,7 @@ private fun WayControlApp(store: SecureConnectionStore) {
     var loading by remember { mutableStateOf(false) }
     var snapshot by remember { mutableStateOf(RemoteSnapshot()) }
     var telemetryHistory by remember { mutableStateOf(TelemetryHistory()) }
+    var mediaArtwork by remember { mutableStateOf<MediaArtworkImage?>(null) }
     var eventCounter by remember { mutableIntStateOf(0) }
     var discoveredServers by remember { mutableStateOf(emptyList<DiscoveredServer>()) }
     var discoveryStatus by remember { mutableStateOf<String?>(null) }
@@ -130,6 +136,7 @@ private fun WayControlApp(store: SecureConnectionStore) {
     val scope = rememberCoroutineScope()
     val capabilities = remember(snapshot.desktop) { CompositorCapabilities.fromDesktop(snapshot.desktop) }
     val destinations = remember(capabilities) { visibleDestinations(capabilities) }
+    val artworkTarget = remember(snapshot.media) { mediaArtworkTarget(snapshot.media) }
 
     LaunchedEffect(destinations, selected) {
         if (selected !in destinations) selected = Destination.Home
@@ -181,6 +188,23 @@ private fun WayControlApp(store: SecureConnectionStore) {
             while (true) { refresh(); delay(refreshInterval.delayMillis(selected)) }
         }
     }
+    LaunchedEffect(selected, artworkTarget, token, endpoint, pin) {
+        val (playerId, artworkId) = artworkTarget ?: run { mediaArtwork = null; return@LaunchedEffect }
+        if (selected != Destination.System || token == null || endpoint.isBlank() || pin.isBlank()) {
+            mediaArtwork = null
+            return@LaunchedEffect
+        }
+        mediaArtwork = null
+        mediaArtwork = withContext(Dispatchers.IO) {
+            runCatching {
+                val response = WayControlClient(endpoint, pin, token).request(
+                    "media.artwork",
+                    JSONObject().put("player_id", playerId).put("artwork_id", artworkId),
+                )
+                decodeMediaArtwork(response)?.takeIf { it.artworkId == artworkId }
+            }.getOrNull()
+        }
+    }
     LaunchedEffect(token, endpoint, pin, capabilities.events) {
         val savedToken = token ?: return@LaunchedEffect
         if (endpoint.isBlank() || pin.isBlank() || !capabilities.events) return@LaunchedEffect
@@ -229,7 +253,7 @@ private fun WayControlApp(store: SecureConnectionStore) {
                     Destination.Windows -> WindowScreen(snapshot.windows, snapshot.workspaces, status, capabilities) { operation, address, payload ->
                         scope.launch { runCatching { withContext(Dispatchers.IO) { WayControlClient(endpoint, pin, token).request(operation, payload.put("address", address)) } }.onFailure { error = it.message } }
                     }
-                    Destination.System -> SystemScreenWithHistory(snapshot.desktop, snapshot.monitors, status, capabilities, snapshot.audio, snapshot.media, telemetryHistory) { operation, payload ->
+                    Destination.System -> SystemScreenWithHistory(snapshot.desktop, snapshot.monitors, status, capabilities, snapshot.audio, snapshot.media, telemetryHistory, mediaArtwork) { operation, payload ->
                         scope.launch { runCatching { withContext(Dispatchers.IO) { WayControlClient(endpoint, pin, token).request(operation, payload) } }.onFailure { error = it.message } }
                     }
                     Destination.Settings -> SettingsScreen(
@@ -408,15 +432,15 @@ private fun WayControlApp(store: SecureConnectionStore) {
     }
 }
 
-@Composable internal fun SystemScreen(desktop: JSONObject, monitors: JSONArray, status: String, capabilities: CompositorCapabilities = CompositorCapabilities(), audio: JSONObject = JSONObject(), media: JSONObject = JSONObject(), action: (String, JSONObject) -> Unit) {
-    SystemScreenContent(desktop, monitors, status, capabilities, audio, media, TelemetryHistory(), action)
+@Composable internal fun SystemScreen(desktop: JSONObject, monitors: JSONArray, status: String, capabilities: CompositorCapabilities = CompositorCapabilities(), audio: JSONObject = JSONObject(), media: JSONObject = JSONObject(), artwork: MediaArtworkImage? = null, action: (String, JSONObject) -> Unit) {
+    SystemScreenContent(desktop, monitors, status, capabilities, audio, media, TelemetryHistory(), artwork, action)
 }
 
-@Composable internal fun SystemScreenWithHistory(desktop: JSONObject, monitors: JSONArray, status: String, capabilities: CompositorCapabilities = CompositorCapabilities(), audio: JSONObject = JSONObject(), media: JSONObject = JSONObject(), history: TelemetryHistory, action: (String, JSONObject) -> Unit) {
-    SystemScreenContent(desktop, monitors, status, capabilities, audio, media, history, action)
+@Composable internal fun SystemScreenWithHistory(desktop: JSONObject, monitors: JSONArray, status: String, capabilities: CompositorCapabilities = CompositorCapabilities(), audio: JSONObject = JSONObject(), media: JSONObject = JSONObject(), history: TelemetryHistory, artwork: MediaArtworkImage? = null, action: (String, JSONObject) -> Unit) {
+    SystemScreenContent(desktop, monitors, status, capabilities, audio, media, history, artwork, action)
 }
 
-@Composable private fun SystemScreenContent(desktop: JSONObject, monitors: JSONArray, status: String, capabilities: CompositorCapabilities, audio: JSONObject, media: JSONObject, history: TelemetryHistory, action: (String, JSONObject) -> Unit) {
+@Composable private fun SystemScreenContent(desktop: JSONObject, monitors: JSONArray, status: String, capabilities: CompositorCapabilities, audio: JSONObject, media: JSONObject, history: TelemetryHistory, artwork: MediaArtworkImage?, action: (String, JSONObject) -> Unit) {
     Header("System monitor", status)
     TelemetryHistoryCharts(history)
     var powerConfirmation by remember { mutableStateOf<String?>(null) }
@@ -620,6 +644,13 @@ private fun WayControlApp(store: SecureConnectionStore) {
                 val playerId = player.optString("player_id")
                 val playerName = player.optString("name", playerId)
                 Text(playerName + " · " + player.optString("playback_status", "Unknown"), color = SecondaryText)
+                if (player.optString("artwork_id") == artwork?.artworkId) {
+                    Image(
+                        bitmap = artwork.bitmap.asImageBitmap(),
+                        contentDescription = "Album artwork for $playerName",
+                        modifier = Modifier.size(112.dp).clip(RoundedCornerShape(12.dp)),
+                    )
+                }
                 val title = player.optString("title")
                 val artist = player.optString("artist")
                 val album = player.optString("album")
