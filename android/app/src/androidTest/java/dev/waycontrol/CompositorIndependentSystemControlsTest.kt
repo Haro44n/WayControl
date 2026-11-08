@@ -36,8 +36,8 @@ class CompositorIndependentSystemControlsTest {
     fun telemetryHistoryChartsExposeRecentCpuAndMemorySamples() {
         val history = TelemetryHistory(
             samples = listOf(
-                TelemetrySample(cpuPercent = 20.0, memoryPercent = 40.0),
-                TelemetrySample(cpuPercent = 80.0, memoryPercent = 60.0),
+                TelemetrySample(cpuPercent = 20.0, memoryPercent = 40.0, gpuPercent = 30.0, gpuTemperatureCelsius = 50.0, networkReceivedBytesPerSecond = 1000.0, networkTransmittedBytesPerSecond = 500.0),
+                TelemetrySample(cpuPercent = 80.0, memoryPercent = 60.0, gpuPercent = 65.0, gpuTemperatureCelsius = 71.0, networkReceivedBytesPerSecond = 2500.0, networkTransmittedBytesPerSecond = 1250.0),
             ),
         )
         composeRule.setContent {
@@ -53,6 +53,14 @@ class CompositorIndependentSystemControlsTest {
         composeRule.onNodeWithContentDescription("CPU usage history, 2 samples, latest 80.0%")
             .performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Memory usage history, 2 samples, latest 60.0%")
+            .performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("GPU usage history, 2 samples, latest 65.0%")
+            .performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("GPU temperature history, 2 samples, latest 71.0 °C")
+            .performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Network received history, 2 samples, latest 2.4 KiB/s")
+            .performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Network transmitted history, 2 samples, latest 1.2 KiB/s")
             .performScrollTo().assertIsDisplayed()
     }
 

@@ -31,4 +31,23 @@ class TelemetryHistoryTest {
         assertTrue(telemetrySample(JSONObject()).let { it.cpuPercent == null && it.memoryPercent == null })
         assertEquals(TelemetryHistory(), TelemetryHistory().append(telemetrySample(JSONObject())))
     }
+
+    @Test
+    fun sampleExtractionCapturesGpuNetworkAndTemperatureHistory() {
+        val sample = telemetrySample(
+            JSONObject()
+                .put("gpu", JSONObject().put("available", true).put("utilization_percent", 63).put("temperature_celsius", 71))
+                .put(
+                    "network_rates",
+                    org.json.JSONArray()
+                        .put(JSONObject().put("received_bytes_per_second", 1200).put("transmitted_bytes_per_second", 800))
+                        .put(JSONObject().put("received_bytes_per_second", 300).put("transmitted_bytes_per_second", 200)),
+                ),
+        )
+
+        assertEquals(63.0, sample.gpuPercent!!, 0.0)
+        assertEquals(71.0, sample.gpuTemperatureCelsius!!, 0.0)
+        assertEquals(1500.0, sample.networkReceivedBytesPerSecond!!, 0.0)
+        assertEquals(1000.0, sample.networkTransmittedBytesPerSecond!!, 0.0)
+    }
 }
