@@ -1,0 +1,23 @@
+[package]
+name = "waycontrol-protocol-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+[dependencies.waycontrol-protocol]
+path = "../crates/waycontrol-protocol"
+
+[[bin]]
+name = "parse_request_envelope"
+path = "fuzz_targets/parse_request_envelope.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

@@ -14,7 +14,7 @@
 
 - Android pairing, pinned TLS, Keystore-backed token restore, and daemon reconnect were exercised on an Android 16 emulator. The terminal QR generator and Android Google Play services scanner are implemented; Android validates HTTPS, a private IPv4 endpoint, the certificate fingerprint, the short-lived pairing code, and its expiry before filling the pairing form. End-to-end camera scanning on a Google Play-enabled physical device, the Poco M5, and additional API/OEM combinations remain untested.
 - LAN binding and firewall exposure require deliberate operator configuration. No port discovery, LAN service advertisement, or firewall changes are performed by the installer.
-- A formal security review, fuzzing of the network parser, and validation on multiple Android API levels are still needed.
+- Fuzzing currently covers bounded JSON request-envelope parsing and typed validation. Coverage-guided fuzzing does not replace a hostile-network penetration test or live device checks.
 - Power and monitor operations are available only to paired devices, but their execution has not been tested on the live desktop. Lock, systemctl power commands, wpctl, playerctl, and DPMS availability depend on the user's session installation. Server-side policy currently validates authentication and allowlisted values; confirmation is a client UI behavior.
 - The daemon can be configured to bind to a LAN address. It does not discover or firewall-protect that address; operators must restrict access to trusted networks.
 
@@ -34,8 +34,9 @@ Security checks exercised in the current Rust test and loopback runs include exp
 
 ## Audit limits and deployment notes
 
-- `cargo-audit` and `gitleaks` were not installed, so dependency advisory scanning and dedicated secret scanning were not run. No dependency tooling was installed as part of this review.
-- Fuzzing and a hostile-network penetration test remain outstanding. The TLS pairing/reconnect path was exercised on an Android emulator, not across a hostile network or multiple physical Android vendors.
+- `cargo audit` scanned 207 locked Rust crate dependencies. It found no vulnerability advisories; it reported three informational unmaintained-crate advisories for `zvariant`, `zvariant_derive`, and `zbus_names` from the current zbus 5 dependency graph. These crates have been folded into zbus 6, but zbus 6 requires Rust 1.89 while this project currently declares Rust 1.85, so the major migration is deferred and the warnings remain recorded.
+- `gitleaks git . --redact=100` scanned 19 commits and found no leaks.
+- A 45-second libFuzzer run exercised the 64 KiB-bounded JSON `RequestEnvelope` parser and typed validator for 4.1 million executions without a crash. This is not a hostile-network penetration test. The TLS pairing/reconnect path was exercised on an Android emulator, not across a hostile network or multiple physical Android vendors.
 - `systemd-analyze verify systemd/waycontrol.service` parsed the unit but reported its configured `%h/.local/bin/waycontrold` executable is absent because the service has not been installed. The service itself was not started under systemd.
 - LAN binding is opt-in and must be paired with host firewall rules for a trusted network. The project does not configure firewall policy.
 - `PROGRESS.md` records the complete test evidence, measured runtime data, and product work that remains before v0.1 acceptance.
@@ -44,6 +45,12 @@ Security checks exercised in the current Rust test and loopback runs include exp
 
 A focused source review covered QR pairing generation/decoding, pairing endpoint validation, certificate pinning, and the CI workflow. The QR expiry calculation previously used unchecked `Long` subtraction. An attacker-controlled QR timestamp could overflow that subtraction and appear to be within the allowed lifetime. Android now uses checked subtraction and rejects overflow; a regression test reproduced the old behavior and passes with the fix. This bypassed only the client's expiry check: the QR contains no device credential, and the daemon still validates the live pairing code and requires local approval.
 
-This was a focused review, not a full-project security assessment. Dependency advisory scanning, dedicated secret scanning, live device QR scanning, and hostile-network testing remain outstanding.
+This was a focused review, not a full-project security assessment. Live device QR scanning and hostile-network testing remain outstanding.
+
+## Review performed (2026-11-08)
+
+The automation profile checkpoint was reviewed for typed operation dispatch, persisted-data validation, confirmation gating, and launch argument handling. Application launch accepts only a bounded desktop entry ID and executes `gtk-launch` with a single argument. The Arch package now declares GTK 3 as a runtime dependency. The profile actions do not provide shell execution.
+
+The dependency advisory scan, secret scan, and protocol parser fuzz run are recorded above. Re-run the fuzzer with `cargo +nightly fuzz run parse_request_envelope -- -max_total_time=45 -max_len=65536`. The D-Bus dependency advisories are informational maintenance notices, not reported vulnerabilities. The broader independent security review and hostile-network testing remain outstanding.
 
 Report suspected vulnerabilities through the project maintainer. Do not expose a LAN-bound service on an untrusted network.
