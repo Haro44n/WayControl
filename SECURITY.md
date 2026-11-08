@@ -17,6 +17,7 @@
 - Fuzzing currently covers bounded JSON request-envelope parsing and typed validation. Coverage-guided fuzzing does not replace a hostile-network penetration test or live device checks.
 - Power and monitor operations are available only to paired devices, but their execution has not been tested on the live desktop. Lock, systemctl power commands, wpctl, playerctl, and DPMS availability depend on the user's session installation. Server-side policy currently validates authentication and allowlisted values; confirmation is a client UI behavior.
 - The daemon can be configured to bind to a LAN address. It does not discover or firewall-protect that address; operators must restrict access to trusted networks.
+- Allowlisted host commands have a five-second deadline and cap captured output at 64 KiB stdout and 8 KiB stderr. This prevents unbounded command output from exhausting daemon memory; timeout or output-limit cancellation kills the child process.
 
 ## Review performed (2026-11-07)
 
@@ -52,5 +53,9 @@ This was a focused review, not a full-project security assessment. Live device Q
 The automation profile checkpoint was reviewed for typed operation dispatch, persisted-data validation, confirmation gating, and launch argument handling. Application launch accepts only a bounded desktop entry ID and executes `gtk-launch` with a single argument. The Arch package now declares GTK 3 as a runtime dependency. The profile actions do not provide shell execution.
 
 The dependency advisory scan, secret scan, and protocol parser fuzz run are recorded above. Re-run the fuzzer with `cargo +nightly fuzz run parse_request_envelope -- -max_total_time=45 -max_len=65536`. The D-Bus dependency advisories are informational maintenance notices, not reported vulnerabilities. The broader independent security review and hostile-network testing remain outstanding.
+
+## Review performed (2026-11-08)
+
+A review of host command execution found that `Command::output()` captured stdout and stderr without a size limit. A noisy or misbehaving allowlisted utility could therefore consume daemon memory, and dropping a timed-out output future did not ensure the child process was killed. Both captured streams now have explicit limits, are drained concurrently, and the child is configured to terminate when the operation is cancelled. Regression tests verify stdout and stderr limit enforcement. Workspace tests and Clippy passed after the fix.
 
 Report suspected vulnerabilities through the project maintainer. Do not expose a LAN-bound service on an untrusted network.
