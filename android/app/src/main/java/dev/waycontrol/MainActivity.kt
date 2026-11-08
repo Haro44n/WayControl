@@ -67,6 +67,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 import kotlin.math.roundToInt
 
 private val Background = Color(0xFF0B0B0E)
@@ -424,6 +425,19 @@ private fun WayControlApp(store: SecureConnectionStore) {
             }
         }
     }
+    val storage = storageRows(desktop.optJSONArray("storage") ?: JSONArray())
+    if (storage.isNotEmpty()) {
+        Card {
+            Text("Storage", color = MainText, fontWeight = FontWeight.Medium)
+            storage.forEach { mount ->
+                Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                    Text(mount.mountPoint, color = MainText)
+                    Text(mount.sourceAndType, color = SecondaryText, style = MaterialTheme.typography.bodySmall)
+                    Text(mount.usage, color = SecondaryText, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
     val cpuCores = desktop.optJSONArray("cpu_cores") ?: JSONArray()
     if (cpuCores.length() > 0) {
         Card {
@@ -742,12 +756,12 @@ private fun WayControlApp(store: SecureConnectionStore) {
     }
 }
 
-private fun bytes(value: Long): String {
+internal fun bytes(value: Long): String {
     if (value < 0) return "Unavailable"
     val units = listOf("B", "KiB", "MiB", "GiB", "TiB")
     var amount = value.toDouble(); var unit = 0
     while (amount >= 1024 && unit < units.lastIndex) { amount /= 1024; unit++ }
-    return "%.1f %s".format(amount, units[unit])
+    return String.format(Locale.ROOT, "%.1f %s", amount, units[unit])
 }
 
 private fun duration(seconds: Double): String {

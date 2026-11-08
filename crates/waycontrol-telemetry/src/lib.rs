@@ -29,6 +29,13 @@ pub struct CpuCoreTemperature {
     pub temperature_millidegrees: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageMount {
+    pub source: String,
+    pub mount_point: String,
+    pub filesystem_type: String,
+}
+
 pub fn network_rates(
     previous: &[NetworkInterface],
     current: &[NetworkInterface],
@@ -187,6 +194,87 @@ fn parse_hwmon_id(label: &str, prefix: &str) -> Option<u32> {
         return None;
     }
     id.parse().ok()
+}
+
+/// Parse mount entries suitable for disk-capacity reporting from `/proc/self/mounts`.
+pub fn parse_storage_mounts(input: &str) -> Vec<StorageMount> {
+    input
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let source = fields.next()?;
+            let mount_point = fields.next()?;
+            let filesystem_type = fields.next()?;
+            fields.next()?;
+            fields.next()?;
+            fields.next()?;
+            if is_virtual_filesystem(filesystem_type) {
+                return None;
+            }
+            Some(StorageMount {
+                source: decode_mount_field(source),
+                mount_point: decode_mount_field(mount_point),
+                filesystem_type: filesystem_type.to_owned(),
+            })
+        })
+        .collect()
+}
+
+fn is_virtual_filesystem(filesystem_type: &str) -> bool {
+    matches!(
+        filesystem_type,
+        "autofs"
+            | "binfmt_misc"
+            | "bpf"
+            | "cgroup"
+            | "cgroup2"
+            | "configfs"
+            | "debugfs"
+            | "devpts"
+            | "devtmpfs"
+            | "efivarfs"
+            | "fusectl"
+            | "hugetlbfs"
+            | "mqueue"
+            | "nsfs"
+            | "proc"
+            | "pstore"
+            | "rpc_pipefs"
+            | "securityfs"
+            | "sysfs"
+            | "tmpfs"
+            | "ramfs"
+            | "tracefs"
+    )
+}
+
+fn decode_mount_field(field: &str) -> String {
+    let bytes = field.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'\\'
+            && index + 3 < bytes.len()
+            && bytes[index + 1..index + 4]
+                .iter()
+                .all(|byte| (b'0'..=b'7').contains(byte))
+        {
+            let value = u16::from(bytes[index + 1] - b'0') * 64
+                + u16::from(bytes[index + 2] - b'0') * 8
+                + u16::from(bytes[index + 3] - b'0');
+            if let Ok(value) = u8::try_from(value) {
+                decoded.push(value);
+                index += 4;
+            } else {
+                decoded.push(bytes[index]);
+                index += 1;
+            }
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
 }
 
 /// Calculate utilization between two cumulative samples. First/unchanged samples have no rate.
@@ -376,5 +464,34 @@ mod tests {
         ] {
             assert_eq!(parse_coretemp_temperature(package, core, value), None);
         }
+    }
+
+    #[test]
+    fn storage_mount_parser_decodes_mount_escapes_and_skips_pseudo_filesystems() {
+        let mounts = parse_storage_mounts(
+            "/dev/nvme0n1p2 /mnt/My\\040Disk btrfs rw,relatime 0 0\nproc /proc proc rw,nosuid 0 0\nserver:/share /mnt/net\\040share nfs4 rw 0 0\n",
+        );
+        assert_eq!(
+            mounts,
+            vec![
+                StorageMount {
+                    source: "/dev/nvme0n1p2".into(),
+                    mount_point: "/mnt/My Disk".into(),
+                    filesystem_type: "btrfs".into(),
+                },
+                StorageMount {
+                    source: "server:/share".into(),
+                    mount_point: "/mnt/net share".into(),
+                    filesystem_type: "nfs4".into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn storage_mount_parser_skips_malformed_rows_and_decodes_backslashes() {
+        let mounts = parse_storage_mounts("/dev/sda1 /mnt/a\\134b ext4 rw 0 0\nmalformed row\n");
+        assert_eq!(mounts.len(), 1);
+        assert_eq!(mounts[0].mount_point, "/mnt/a\\b");
     }
 }

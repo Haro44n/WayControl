@@ -56,6 +56,35 @@ class CompositorIndependentSystemControlsTest {
     }
 
     @Test
+    fun storageCapacityRendersWithoutCompositorCapabilities() {
+        val desktop = JSONObject().put(
+            "storage",
+            JSONArray().put(
+                JSONObject()
+                    .put("mount_point", "/home")
+                    .put("source", "/dev/nvme0n1p2")
+                    .put("filesystem_type", "btrfs")
+                    .put("total_bytes", 1_000_000_000)
+                    .put("used_bytes", 725_000_000)
+                    .put("available_bytes", 250_000_000),
+            ),
+        )
+        composeRule.setContent {
+            MaterialTheme {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    SystemScreen(desktop, JSONArray(), "Connected", action = { _, _ -> })
+                }
+            }
+        }
+
+        composeRule.onNodeWithText("Storage").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("/home").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("/dev/nvme0n1p2 · btrfs").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("72.5% used · 691.9 MiB / 953.7 MiB · 238.4 MiB free")
+            .performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
     fun pairingQrActionIsAvailableAndDispatchesScanRequest() {
         val scanRequested = AtomicReference(false)
         composeRule.setContent {

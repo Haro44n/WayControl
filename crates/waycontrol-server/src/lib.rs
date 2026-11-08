@@ -20,6 +20,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     convert::Infallible,
+    ffi::CString,
     net::{IpAddr, SocketAddr},
     path::{Path as FsPath, PathBuf},
     sync::Arc,
@@ -1625,6 +1626,14 @@ async fn desktop_snapshot(backend: &dyn CompositorBackend) -> Result<Value, Stri
             })
         })
         .collect::<Vec<_>>();
+    let storage = std::fs::read_to_string("/proc/self/mounts")
+        .ok()
+        .map(|input| waycontrol_telemetry::parse_storage_mounts(&input))
+        .into_iter()
+        .flatten()
+        .take(64)
+        .filter_map(storage_mount_snapshot)
+        .collect::<Vec<_>>();
     let load_average = std::fs::read_to_string("/proc/loadavg")
         .ok()
         .and_then(|input| waycontrol_telemetry::parse_load_average(&input).ok())
@@ -1651,10 +1660,41 @@ async fn desktop_snapshot(backend: &dyn CompositorBackend) -> Result<Value, Stri
         "cpu_frequency_khz":cpu_frequency_khz,
         "cpu_cores":cpu_cores,
         "cpu_core_temperatures":cpu_core_temperatures,
+        "storage":storage,
         "load_average":load_average,
         "memory":memory,
         "network_rates":network_rates,
         "gpu":gpu_snapshot()
+    }))
+}
+
+fn storage_mount_snapshot(mount: waycontrol_telemetry::StorageMount) -> Option<Value> {
+    let path = CString::new(mount.mount_point.as_bytes()).ok()?;
+    let mut stats = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: `path` is NUL terminated and `stats` points to writable storage for statvfs.
+    if unsafe { libc::statvfs(path.as_ptr(), stats.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    // SAFETY: a successful statvfs call initializes the output structure.
+    let stats = unsafe { stats.assume_init() };
+    let block_size = if stats.f_frsize > 0 {
+        stats.f_frsize
+    } else {
+        stats.f_bsize
+    };
+    let total_bytes = stats.f_blocks.saturating_mul(block_size);
+    if total_bytes == 0 {
+        return None;
+    }
+    let free_bytes = stats.f_bfree.saturating_mul(block_size).min(total_bytes);
+    let available_bytes = stats.f_bavail.saturating_mul(block_size).min(total_bytes);
+    Some(json!({
+        "source":mount.source,
+        "mount_point":mount.mount_point,
+        "filesystem_type":mount.filesystem_type,
+        "total_bytes":total_bytes,
+        "used_bytes":total_bytes.saturating_sub(free_bytes),
+        "available_bytes":available_bytes
     }))
 }
 

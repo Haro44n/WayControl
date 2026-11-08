@@ -33,6 +33,7 @@ tokio.workspace = true
 nvml-wrapper = "0.13.0"
 futures-util.workspace = true
 qrcodegen = "1.8.0"
+libc = "0.2"
 
 [dev-dependencies]
 tower.workspace = true

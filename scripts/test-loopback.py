@@ -155,8 +155,10 @@ def main():
                         if not line:
                             break
                         if line.startswith(b"data:"):
-                            event = line.decode(errors="replace").removeprefix("data:").strip()
-                            break
+                            candidate = line.decode(errors="replace").removeprefix("data:").strip()
+                            if "workspace>>" in candidate:
+                                event = candidate
+                                break
                     assert event and "workspace>>" in event, f"did not receive a Hyprland workspace event: {event!r}"
                     return event
                 finally:
@@ -184,6 +186,18 @@ def main():
                 for item in core_temperatures
             ), "per-core CPU temperature data malformed"
             print(f"Per-core CPU temperature sensors: {len(core_temperatures)}")
+            storage = telemetry.get("storage")
+            assert isinstance(storage, list), "storage telemetry unavailable"
+            assert all(
+                isinstance(item.get("mount_point"), str) and item["mount_point"].startswith("/")
+                and isinstance(item.get("source"), str) and isinstance(item.get("filesystem_type"), str)
+                and item.get("total_bytes", 0) > 0
+                and 0 <= item.get("used_bytes", -1) <= item["total_bytes"]
+                and 0 <= item.get("available_bytes", -1) <= item["total_bytes"]
+                for item in storage
+            ), "storage telemetry contains invalid mount data"
+            assert any(item["mount_point"] == "/" for item in storage), "root filesystem capacity is missing"
+            print(f"Storage mounts: {len(storage)}")
             status, workspaces = api("workspace.list", "workspaces")
             assert status == 200 and workspaces["success"] and isinstance(workspaces["payload"], list), f"workspace list returned {status}"
             status, windows = api("window.list", "windows")
