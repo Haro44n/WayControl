@@ -14,7 +14,7 @@ systemctl --user daemon-reload
 systemctl --user enable --now waycontrol.service
 ```
 
-The helper fetches the locked Rust dependencies before `makepkg`; the PKGBUILD builds offline and installs `/usr/bin/waycontrold` plus a systemd user unit. The package source is the current checkout, so rerun the helper after updating it. To build without installing, run `./packaging/arch/build-package.sh` and install the resulting `packaging/arch/waycontrol-*.pkg.tar.zst` later with `sudo pacman -U`.
+The helper fetches the locked Rust dependencies before `makepkg`; the PKGBUILD builds offline and installs `/usr/bin/waycontrold` plus a systemd user unit. The package depends on GTK 3 for the profile application-launch operation (`gtk-launch`). The package source is the current checkout, so rerun the helper after updating it. To build without installing, run `./packaging/arch/build-package.sh` and install the resulting `packaging/arch/waycontrol-*.pkg.tar.zst` later with `sudo pacman -U`.
 
 ### Build and install manually
 
