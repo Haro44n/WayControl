@@ -5,6 +5,16 @@ on:
   pull_request:
 
 jobs:
+  sway-live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install headless Sway test dependencies
+        run: sudo apt-get update && sudo apt-get install -y sway xwayland xterm dbus-daemon
+      - name: Exercise Sway adapter against a headless compositor
+        run: dbus-run-session -- ./scripts/test-sway-headless.sh
+
   test:
     runs-on: ubuntu-latest
     steps:

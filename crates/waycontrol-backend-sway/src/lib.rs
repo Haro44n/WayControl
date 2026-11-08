@@ -405,6 +405,135 @@ mod tests {
 
     static NEXT_SOCKET: AtomicU64 = AtomicU64::new(0);
 
+    #[tokio::test]
+    #[ignore = "requires a live Sway compositor and WAYCONTROL_TEST_LIVE_SWAY=1"]
+    async fn live_sway_supports_workspace_window_monitor_and_event_operations() {
+        assert_eq!(
+            std::env::var("WAYCONTROL_TEST_LIVE_SWAY").as_deref(),
+            Ok("1"),
+            "this live test must run only in its isolated headless CI session"
+        );
+        let adapter = SwayAdapter::from_env().expect("CI should provide SWAYSOCK");
+        let monitors = adapter.monitors().await.expect("query Sway outputs");
+        assert!(
+            !monitors.is_empty(),
+            "headless Sway should expose an output"
+        );
+        let workspaces = adapter.workspaces().await.expect("query workspaces");
+        let original = workspaces
+            .iter()
+            .find(|workspace| workspace.active)
+            .map(|workspace| workspace.id.clone())
+            .expect("headless Sway should expose an active workspace");
+
+        let window = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                if let Ok(windows) = adapter.windows().await {
+                    if let Some(window) = windows
+                        .into_iter()
+                        .find(|window| window.title == "WayControlLiveTest")
+                    {
+                        break window;
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("CI xterm window should appear in Sway's tree");
+
+        let target = WorkspaceId::from("WayControl Live Test");
+        let mut events = tokio::io::BufReader::new(
+            adapter
+                .event_stream()
+                .await
+                .expect("subscribe to Sway events"),
+        );
+        adapter
+            .switch_workspace(&target)
+            .await
+            .expect("create and focus named workspace");
+        let event = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let mut line = String::new();
+            loop {
+                line.clear();
+                if events.read_line(&mut line).await? == 0 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "Sway event stream closed",
+                    ));
+                }
+                if line.contains("WayControl Live Test") {
+                    return Ok::<_, std::io::Error>(line.clone());
+                }
+            }
+        })
+        .await
+        .expect("Sway should publish a workspace event")
+        .expect("read Sway workspace event");
+        assert!(
+            event.contains("WayControl Live Test"),
+            "unexpected event: {event}"
+        );
+        assert!(
+            adapter
+                .workspaces()
+                .await
+                .unwrap()
+                .iter()
+                .any(|workspace| workspace.id == target && workspace.active)
+        );
+
+        adapter
+            .move_window(&window.address, &target)
+            .await
+            .expect("move the test window to the named workspace");
+        adapter
+            .focus_window(&window.address)
+            .await
+            .expect("focus the test window");
+        adapter
+            .toggle_floating(&window.address)
+            .await
+            .expect("toggle the test window floating state");
+        let floating = adapter.windows().await.unwrap();
+        assert!(
+            floating
+                .iter()
+                .any(|item| item.address == window.address && item.floating)
+        );
+
+        adapter
+            .toggle_fullscreen(&window.address)
+            .await
+            .expect("toggle fullscreen for the test window");
+        let fullscreen = adapter.windows().await.unwrap();
+        assert!(
+            fullscreen
+                .iter()
+                .any(|item| item.address == window.address && item.fullscreen)
+        );
+        adapter
+            .switch_workspace(&original)
+            .await
+            .expect("restore the original active workspace");
+        adapter
+            .close_window(&window.address)
+            .await
+            .expect("close only the temporary CI window");
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let remaining = adapter.windows().await.unwrap();
+                if !remaining.iter().any(|item| item.address == window.address) {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("closed XTerm window should disappear from Sway's tree");
+    }
+
     async fn mock_socket() -> (PathBuf, UnixListener) {
         let path = std::env::temp_dir().join(format!(
             "waycontrol-sway-{}-{}.sock",
