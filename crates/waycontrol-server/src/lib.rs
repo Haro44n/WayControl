@@ -558,6 +558,12 @@ impl CompositorBackend for WaylandBackend {
             _ => Err(self.unsupported()),
         }
     }
+    async fn toggle_pinned(&self, id: &str) -> Result<(), String> {
+        match self {
+            Self::Hyprland(adapter) => adapter.toggle_pinned(id).await,
+            _ => Err("window pinning is unsupported by this compositor".into()),
+        }
+    }
     async fn close_window(&self, id: &str) -> Result<(), String> {
         match self {
             Self::Hyprland(adapter) => adapter.close_window(id).await,
@@ -1818,6 +1824,12 @@ async fn request(
             .toggle_fullscreen(&address)
             .await
             .map(|()| json!({})),
+        Operation::TogglePinned { address } => state
+            .0
+            .compositor
+            .toggle_pinned(&address)
+            .await
+            .map(|()| json!({})),
         Operation::CloseWindow { address } => state
             .0
             .compositor
@@ -1932,6 +1944,7 @@ fn required_capability(operation: &Operation) -> Option<fn(&CompositorCapabiliti
         Operation::MoveWindow { .. } => Some(|capabilities| capabilities.move_window),
         Operation::ToggleFloating { .. } => Some(|capabilities| capabilities.toggle_floating),
         Operation::ToggleFullscreen { .. } => Some(|capabilities| capabilities.toggle_fullscreen),
+        Operation::TogglePinned { .. } => Some(|capabilities| capabilities.toggle_pinned),
         Operation::CloseWindow { .. } => Some(|capabilities| capabilities.close_window),
         Operation::ListMonitors => Some(|capabilities| capabilities.monitors),
         Operation::SetMonitorPower { .. } => Some(|capabilities| capabilities.monitor_power),
@@ -3425,6 +3438,13 @@ mod tests {
             .unwrap();
         let json: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(json["error"]["code"], "unsupported_operation");
+        let pin = send(
+            app.clone(),
+            Some(&token),
+            r#"{"version":1,"id":"pin","type":"window.toggle_pinned","payload":{"address":"0xabc"}}"#,
+        )
+        .await;
+        assert_eq!(pin.status(), StatusCode::NOT_IMPLEMENTED);
         let lock = send(
             app,
             Some(&token),

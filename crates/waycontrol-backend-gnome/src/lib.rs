@@ -174,6 +174,7 @@ fn map_windows(records: Vec<WindowRecord>) -> Result<Vec<Window>, String> {
                     .map(|value| bounded_text(value, 256))
                     .transpose()?,
                 floating: None,
+                pinned: None,
                 fullscreen: record.fullscreen,
                 focused: record.focused,
             })

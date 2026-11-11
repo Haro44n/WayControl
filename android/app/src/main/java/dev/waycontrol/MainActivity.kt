@@ -615,6 +615,7 @@ private fun HomeQuickActions(
                     if (capabilities.focusWindow) Button(onClick = { action("window.focus", address, JSONObject()) }) { Text("Focus") }
                     if (capabilities.toggleFloating) Button(onClick = { action("window.toggle_floating", address, JSONObject()) }) { Text(if (item.optBoolean("floating")) "Tile" else "Float") }
                     if (capabilities.toggleFullscreen) Button(onClick = { action("window.toggle_fullscreen", address, JSONObject()) }) { Text(if (item.optBoolean("fullscreen")) "Exit full screen" else "Full screen") }
+                    if (capabilities.togglePinned && item.optBoolean("floating") && item.has("pinned") && !item.isNull("pinned")) Button(onClick = { action("window.toggle_pinned", address, JSONObject()) }) { Text(if (item.optBoolean("pinned")) "Unpin" else "Pin") }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (capabilities.moveWindow && capabilities.workspaces) Button(onClick = { menuOpen = true }) { Text("Move to workspace") }

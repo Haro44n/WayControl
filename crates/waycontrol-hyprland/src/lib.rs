@@ -220,6 +220,7 @@ impl HyprlandClient {
                         .and_then(Value::as_i64)
                         .and_then(|id| monitor_names.get(&id).cloned()),
                     floating: Some(c.get("floating").and_then(Value::as_bool).unwrap_or(false)),
+                    pinned: c.get("pinned").and_then(Value::as_bool),
                     fullscreen: c.get("fullscreen").and_then(Value::as_i64).unwrap_or(0) != 0,
                 })
             })
@@ -337,6 +338,25 @@ impl HyprlandClient {
         self.dispatch_compatible(
             &format!("hl.dispatch(hl.dsp.window.close({{ window = \"address:{address}\" }}))"),
             &format!("dispatch closewindow address:{address}"),
+        )
+        .await
+    }
+
+    pub async fn toggle_pinned(&self, address: &str) -> Result<(), HyprlandError> {
+        let window = self
+            .clients()
+            .await?
+            .into_iter()
+            .find(|window| window.address == address)
+            .ok_or_else(|| HyprlandError::CommandRejected("window no longer exists".into()))?;
+        if window.floating != Some(true) {
+            return Err(HyprlandError::CommandRejected(
+                "Hyprland can pin only floating windows".into(),
+            ));
+        }
+        self.dispatch_compatible(
+            &format!("hl.dispatch(hl.dsp.window.pin({{ action = \"toggle\", window = \"address:{address}\" }}))"),
+            &format!("dispatch pin address:{address}"),
         )
         .await
     }
@@ -560,7 +580,7 @@ mod tests {
             for (expected, response) in [
                 (
                     "j/clients",
-                    r#"[{"address":"0xabc","title":"Terminal","class":"kitty","workspace":{"id":1},"monitor":0,"floating":true,"fullscreen":1}]"#,
+                    r#"[{"address":"0xabc","title":"Terminal","class":"kitty","workspace":{"id":1},"monitor":0,"floating":true,"fullscreen":1,"pinned":true}]"#,
                 ),
                 ("j/monitors", r#"[{"id":0,"name":"DP-3"}]"#),
                 ("j/activewindow", r#"{"address":"0xabc"}"#),
@@ -581,8 +601,76 @@ mod tests {
 
         assert_eq!(windows[0].monitor.as_deref(), Some("DP-3"));
         assert_eq!(windows[0].floating, Some(true));
+        assert_eq!(windows[0].pinned, Some(true));
         assert!(windows[0].fullscreen);
         assert!(windows[0].focused);
+    }
+
+    #[tokio::test]
+    async fn pinning_requires_floating_window_and_uses_hyprland_dispatcher() {
+        use tokio::{io::AsyncReadExt, net::UnixListener};
+
+        let dir = std::env::temp_dir().join(format!("waycontrol-pin-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let listener = UnixListener::bind(dir.join(".socket.sock")).unwrap();
+        let server = tokio::spawn(async move {
+            for (expected, response) in [
+                (
+                    "j/clients",
+                    r#"[{"address":"0xabc","floating":true,"pinned":false}]"#,
+                ),
+                ("j/monitors", "[]"),
+                ("j/activewindow", "{}"),
+                (
+                    "eval hl.dispatch(hl.dsp.window.pin({ action = \"toggle\", window = \"address:0xabc\" }))",
+                    "ok",
+                ),
+            ] {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = [0; 256];
+                let size = stream.read(&mut request).await.unwrap();
+                assert_eq!(&request[..size], expected.as_bytes());
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+
+        HyprlandClient::at_socket_dir(dir.clone())
+            .toggle_pinned("0xabc")
+            .await
+            .unwrap();
+        server.await.unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn pinning_rejects_tiled_window_without_dispatch() {
+        use tokio::{io::AsyncReadExt, net::UnixListener};
+
+        let dir = std::env::temp_dir().join(format!("waycontrol-pin-tiled-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let listener = UnixListener::bind(dir.join(".socket.sock")).unwrap();
+        let server = tokio::spawn(async move {
+            for (expected, response) in [
+                ("j/clients", r#"[{"address":"0xabc","floating":false}]"#),
+                ("j/monitors", "[]"),
+                ("j/activewindow", "{}"),
+            ] {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = [0; 256];
+                let size = stream.read(&mut request).await.unwrap();
+                assert_eq!(&request[..size], expected.as_bytes());
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+
+        let result = HyprlandClient::at_socket_dir(dir.clone())
+            .toggle_pinned("0xabc")
+            .await;
+        assert!(result.unwrap_err().to_string().contains("floating"));
+        server.await.unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[tokio::test]

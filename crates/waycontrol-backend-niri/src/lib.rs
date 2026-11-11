@@ -167,6 +167,7 @@ impl NiriAdapter {
                             .and_then(Value::as_bool)
                             .unwrap_or(false),
                     ),
+                    pinned: None,
                     fullscreen: entry
                         .get("is_fullscreen")
                         .and_then(Value::as_bool)
@@ -256,6 +257,7 @@ impl CompositorBackend for NiriAdapter {
             // Niri's current IPC Window model does not expose fullscreen state,
             // while WayControl's UI needs that state to label a toggle safely.
             toggle_fullscreen: false,
+            toggle_pinned: false,
             close_window: true,
             monitors: true,
             monitor_power: false,

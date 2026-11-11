@@ -14,18 +14,20 @@ class CompositorCapabilitiesTest {
         assertFalse(parsed.windows)
         assertFalse(parsed.monitorPower)
         assertFalse(parsed.lockScreen)
+        assertFalse(parsed.togglePinned)
     }
 
     @Test
     fun readsCapabilitiesNegotiatedByTheDaemon() {
         val desktop = JSONObject("""
-            {"capabilities":{"workspaces":true,"windows":true,"monitor_power":false,"lock_screen":true}}
+            {"capabilities":{"workspaces":true,"windows":true,"toggle_pinned":true,"monitor_power":false,"lock_screen":true}}
         """.trimIndent())
         val parsed = CompositorCapabilities.fromDesktop(desktop)
         assertTrue(parsed.workspaces)
         assertTrue(parsed.windows)
         assertFalse(parsed.monitorPower)
         assertTrue(parsed.lockScreen)
+        assertTrue(parsed.togglePinned)
     }
 
     @Test

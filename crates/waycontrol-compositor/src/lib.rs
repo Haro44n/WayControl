@@ -107,6 +107,7 @@ pub struct CompositorCapabilities {
     pub move_window: bool,
     pub toggle_floating: bool,
     pub toggle_fullscreen: bool,
+    pub toggle_pinned: bool,
     pub close_window: bool,
     pub monitors: bool,
     pub monitor_power: bool,
@@ -124,6 +125,7 @@ impl CompositorCapabilities {
         move_window: true,
         toggle_floating: true,
         toggle_fullscreen: true,
+        toggle_pinned: true,
         close_window: true,
         monitors: true,
         monitor_power: true,
@@ -140,6 +142,7 @@ impl CompositorCapabilities {
             move_window: false,
             toggle_floating: false,
             toggle_fullscreen: false,
+            toggle_pinned: false,
             close_window: false,
             monitors: false,
             monitor_power: false,
@@ -163,6 +166,9 @@ pub trait CompositorBackend: Send + Sync + 'static {
     async fn move_window(&self, id: &str, workspace_id: &WorkspaceId) -> Result<(), String>;
     async fn toggle_floating(&self, id: &str) -> Result<(), String>;
     async fn toggle_fullscreen(&self, id: &str) -> Result<(), String>;
+    async fn toggle_pinned(&self, _id: &str) -> Result<(), String> {
+        Err("pinning windows is unsupported by this compositor".into())
+    }
     async fn close_window(&self, id: &str) -> Result<(), String>;
     async fn monitors(&self) -> Result<Vec<Monitor>, String>;
     async fn set_monitor_power(&self, name: &str, enabled: bool) -> Result<(), String>;

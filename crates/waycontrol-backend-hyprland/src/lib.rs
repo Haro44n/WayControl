@@ -115,6 +115,12 @@ impl CompositorBackend for HyprlandAdapter {
             .await
             .map_err(|e| e.to_string())
     }
+    async fn toggle_pinned(&self, id: &str) -> Result<(), String> {
+        self.client()?
+            .toggle_pinned(id)
+            .await
+            .map_err(|e| e.to_string())
+    }
     async fn close_window(&self, id: &str) -> Result<(), String> {
         self.client()?
             .close_window(id)
@@ -160,5 +166,6 @@ mod tests {
         assert!(capabilities.workspaces);
         assert!(capabilities.windows);
         assert!(capabilities.events);
+        assert!(capabilities.toggle_pinned);
     }
 }

@@ -36,6 +36,8 @@ pub enum Operation {
     ToggleFloating { address: String },
     #[serde(rename = "window.toggle_fullscreen")]
     ToggleFullscreen { address: String },
+    #[serde(rename = "window.toggle_pinned")]
+    TogglePinned { address: String },
     #[serde(rename = "window.close")]
     CloseWindow { address: String },
     #[serde(rename = "monitor.list")]
@@ -160,6 +162,7 @@ impl RequestEnvelope {
             | Operation::MoveWindow { address, .. }
             | Operation::ToggleFloating { address }
             | Operation::ToggleFullscreen { address }
+            | Operation::TogglePinned { address }
             | Operation::CloseWindow { address } => Some(address),
             _ => None,
         };
@@ -308,6 +311,9 @@ mod tests {
             Operation::ToggleFullscreen {
                 address: "window\n".into(),
             },
+            Operation::TogglePinned {
+                address: "invalid address".into(),
+            },
             Operation::CloseWindow {
                 address: "a".repeat(MAX_WINDOW_ID_BYTES + 1),
             },
@@ -332,6 +338,22 @@ mod tests {
             },
         };
         assert_eq!(request.validate(), Ok(()));
+    }
+
+    #[test]
+    fn toggle_pinned_uses_the_typed_window_operation_name() {
+        let request = RequestEnvelope {
+            version: PROTOCOL_VERSION,
+            id: "pin".into(),
+            operation: Operation::TogglePinned {
+                address: "0xabc".into(),
+            },
+        };
+        assert_eq!(request.validate(), Ok(()));
+        assert_eq!(
+            serde_json::to_value(request).unwrap()["type"],
+            "window.toggle_pinned"
+        );
     }
 
     #[test]

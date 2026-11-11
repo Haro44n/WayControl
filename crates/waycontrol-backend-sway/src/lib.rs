@@ -189,6 +189,7 @@ fn collect_windows(
                 workspace_id: workspace.map(WorkspaceId::from),
                 monitor: monitor.map(str::to_owned),
                 floating: Some(floating),
+                pinned: None,
                 fullscreen: node
                     .get("fullscreen_mode")
                     .and_then(Value::as_i64)
@@ -306,6 +307,7 @@ impl CompositorBackend for SwayAdapter {
             move_window: true,
             toggle_floating: true,
             toggle_fullscreen: true,
+            toggle_pinned: false,
             close_window: true,
             monitors: true,
             monitor_power: false,

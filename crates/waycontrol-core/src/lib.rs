@@ -84,6 +84,9 @@ pub struct Window {
     pub workspace_id: Option<WorkspaceId>,
     pub monitor: Option<String>,
     pub floating: Option<bool>,
+    /// Whether the compositor keeps this window visible across workspaces.
+    /// `None` means the backend cannot report pinned state.
+    pub pinned: Option<bool>,
     pub fullscreen: bool,
     pub focused: bool,
 }
@@ -142,6 +145,7 @@ mod window_json_tests {
             workspace_id: None,
             monitor: None,
             floating: None,
+            pinned: None,
             fullscreen: false,
             focused: false,
         };
@@ -154,5 +158,37 @@ mod window_json_tests {
             serde_json::from_value::<Window>(known).unwrap().floating,
             Some(true)
         );
+    }
+
+    #[test]
+    fn pinned_state_is_nullable_in_the_wire_model() {
+        let window = Window {
+            address: "hyprland:7".into(),
+            title: "Terminal".into(),
+            app_id: "org.example.Terminal".into(),
+            workspace_id: None,
+            monitor: None,
+            floating: Some(true),
+            fullscreen: false,
+            focused: false,
+            pinned: Some(true),
+        };
+
+        let value = serde_json::to_value(window).unwrap();
+        assert_eq!(value["pinned"], serde_json::Value::Bool(true));
+
+        let unknown = serde_json::from_value::<Window>(serde_json::json!({
+            "address": "gnome:7",
+            "title": "Editor",
+            "app_id": "org.example.Editor",
+            "workspace_id": null,
+            "monitor": null,
+            "floating": null,
+            "fullscreen": false,
+            "focused": false,
+            "pinned": null
+        }))
+        .unwrap();
+        assert_eq!(unknown.pinned, None);
     }
 }
