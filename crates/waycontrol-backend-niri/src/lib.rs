@@ -161,10 +161,12 @@ impl NiriAdapter {
                         .and_then(Value::as_u64)
                         .map(|id| WorkspaceId::new(id.to_string())),
                     monitor: None,
-                    floating: entry
-                        .get("is_floating")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
+                    floating: Some(
+                        entry
+                            .get("is_floating")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                    ),
                     fullscreen: entry
                         .get("is_fullscreen")
                         .and_then(Value::as_bool)
@@ -387,7 +389,11 @@ mod tests {
         })
         .await
         .expect("CI foot window should appear in Niri's window list");
-        assert!(!window.floating, "test window should start tiled");
+        assert_eq!(
+            window.floating,
+            Some(false),
+            "test window should start tiled"
+        );
 
         let mut events = BufReader::new(
             adapter
@@ -456,7 +462,7 @@ mod tests {
                 .await
                 .unwrap()
                 .iter()
-                .any(|item| item.address == window.address && item.floating)
+                .any(|item| item.address == window.address && item.floating == Some(true))
         );
         adapter
             .close_window(&window.address)

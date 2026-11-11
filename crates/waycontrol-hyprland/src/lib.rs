@@ -219,7 +219,7 @@ impl HyprlandClient {
                         .get("monitor")
                         .and_then(Value::as_i64)
                         .and_then(|id| monitor_names.get(&id).cloned()),
-                    floating: c.get("floating").and_then(Value::as_bool).unwrap_or(false),
+                    floating: Some(c.get("floating").and_then(Value::as_bool).unwrap_or(false)),
                     fullscreen: c.get("fullscreen").and_then(Value::as_i64).unwrap_or(0) != 0,
                 })
             })
@@ -580,7 +580,7 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
 
         assert_eq!(windows[0].monitor.as_deref(), Some("DP-3"));
-        assert!(windows[0].floating);
+        assert_eq!(windows[0].floating, Some(true));
         assert!(windows[0].fullscreen);
         assert!(windows[0].focused);
     }

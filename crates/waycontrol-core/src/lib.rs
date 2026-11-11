@@ -83,7 +83,7 @@ pub struct Window {
     pub app_id: String,
     pub workspace_id: Option<WorkspaceId>,
     pub monitor: Option<String>,
-    pub floating: bool,
+    pub floating: Option<bool>,
     pub fullscreen: bool,
     pub focused: bool,
 }
@@ -125,6 +125,34 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<WorkspaceId>("\"web:main\"").unwrap(),
             named
+        );
+    }
+}
+
+#[cfg(test)]
+mod window_json_tests {
+    use super::*;
+
+    #[test]
+    fn floating_state_is_nullable_in_the_wire_model() {
+        let window = Window {
+            address: "gnome:7".into(),
+            title: "Editor".into(),
+            app_id: "org.example.Editor".into(),
+            workspace_id: None,
+            monitor: None,
+            floating: None,
+            fullscreen: false,
+            focused: false,
+        };
+        let value = serde_json::to_value(window).unwrap();
+        assert_eq!(value["floating"], serde_json::Value::Null);
+
+        let mut known = value;
+        known["floating"] = serde_json::Value::Bool(true);
+        assert_eq!(
+            serde_json::from_value::<Window>(known).unwrap().floating,
+            Some(true)
         );
     }
 }

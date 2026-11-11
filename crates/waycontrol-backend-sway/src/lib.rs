@@ -188,7 +188,7 @@ fn collect_windows(
                 app_id: app_id.to_owned(),
                 workspace_id: workspace.map(WorkspaceId::from),
                 monitor: monitor.map(str::to_owned),
-                floating,
+                floating: Some(floating),
                 fullscreen: node
                     .get("fullscreen_mode")
                     .and_then(Value::as_i64)
@@ -501,7 +501,7 @@ mod tests {
         assert!(
             floating
                 .iter()
-                .any(|item| item.address == window.address && item.floating)
+                .any(|item| item.address == window.address && item.floating == Some(true))
         );
 
         adapter
@@ -579,7 +579,7 @@ mod tests {
         assert_eq!(windows[0].address, "sway:42");
         assert!(windows[0].focused && windows[0].fullscreen);
         assert_eq!(windows[1].address, "sway:43");
-        assert!(windows[1].floating);
+        assert_eq!(windows[1].floating, Some(true));
     }
 
     #[tokio::test]
