@@ -10,6 +10,7 @@ extension_dir = root / "packaging/gnome/extension"
 metadata = json.loads((extension_dir / "metadata.json").read_text())
 source = (extension_dir / "extension.js").read_text()
 pkgbuild = (root / "packaging/arch/PKGBUILD").read_text()
+nested_test = (root / "scripts/test-gnome-nested.sh").read_text()
 
 assert metadata["uuid"] == "waycontrol@haro44n.github.io"
 assert metadata["shell-version"][0] == "45"
@@ -47,4 +48,5 @@ assert "toggle_floating" not in source.lower()
 assert "gnome-shell-extension" in pkgbuild
 assert "extension.js" in pkgbuild and "metadata.json" in pkgbuild
 assert not re.search(r"gsettings\s+set|gnome-extensions\s+enable|systemctl.*enable", pkgbuild)
+assert nested_test.index("gnome-shell --nested --wayland") < nested_test.index("gnome-extensions enable")
 print("GNOME extension contract and opt-in packaging checks passed")

@@ -19,6 +19,8 @@ export XDG_CONFIG_HOME="$HOME/.config"
 export XDG_DATA_HOME="$HOME/.local/share"
 export XDG_CACHE_HOME="$HOME/.cache"
 export XDG_RUNTIME_DIR="$tmp_root/runtime"
+export XDG_CURRENT_DESKTOP=GNOME
+export XDG_SESSION_DESKTOP=gnome
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME/gnome-shell/extensions" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR"
 chmod 700 "$XDG_RUNTIME_DIR"
 
@@ -32,7 +34,6 @@ extension_id=waycontrol@haro44n.github.io
 extension_dir="$XDG_DATA_HOME/gnome-shell/extensions/$extension_id"
 mkdir -p "$extension_dir"
 cp -a "$project_root/packaging/gnome/extension/." "$extension_dir/"
-gsettings set org.gnome.shell enabled-extensions "['$extension_id']"
 
 export WAYLAND_DISPLAY=waycontrol-ci
 export XDG_SESSION_TYPE=wayland
@@ -47,6 +48,20 @@ done
 
 gnome-shell --nested --wayland >"$tmp_root/gnome-shell.log" 2>&1 &
 shell_pid=$!
+enabled=0
+for _ in $(seq 1 60); do
+    if gnome-extensions enable "$extension_id" >"$tmp_root/gnome-extensions.log" 2>&1; then
+        enabled=1
+        break
+    fi
+    kill -0 "$shell_pid" 2>/dev/null || break
+    sleep 1
+done
+if [[ "$enabled" != 1 ]]; then
+    cat "$tmp_root/gnome-extensions.log"
+    cat "$tmp_root/gnome-shell.log"
+    exit 1
+fi
 if ! cargo run --locked --manifest-path "$project_root/Cargo.toml" -p waycontrol-backend-gnome --example gnome-smoke; then
     cat "$tmp_root/gnome-shell.log"
     exit 1
