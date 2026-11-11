@@ -45,7 +45,7 @@ jobs:
       - name: Report GNOME test runtime
         run: gnome-shell --version && gjs --version
       - name: Exercise the optional bridge in an isolated nested GNOME Shell
-        run: dbus-run-session -- ./scripts/test-gnome-nested.sh
+        run: ./scripts/test-gnome-nested.sh
 
   test:
     runs-on: ubuntu-latest

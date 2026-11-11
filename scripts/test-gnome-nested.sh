@@ -2,36 +2,50 @@
 set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-runner_home="$HOME"
+if [[ "${WAYCONTROL_GNOME_TEST_IN_SESSION:-0}" != 1 ]]; then
+    runner_home="$HOME"
+    tmp_root="$(mktemp -d)"
+    runtime_dir="$tmp_root/runtime"
+    mkdir -p "$tmp_root/home" "$tmp_root/home/.config" "$tmp_root/home/.local/share" "$tmp_root/home/.cache" "$runtime_dir"
+    chmod 700 "$runtime_dir"
+    if dbus-run-session -- env \
+        WAYCONTROL_GNOME_TEST_IN_SESSION=1 \
+        WAYCONTROL_GNOME_RUNNER_HOME="$runner_home" \
+        WAYCONTROL_GNOME_TMP_ROOT="$tmp_root" \
+        HOME="$tmp_root/home" \
+        XDG_CONFIG_HOME="$tmp_root/home/.config" \
+        XDG_DATA_HOME="$tmp_root/home/.local/share" \
+        XDG_CACHE_HOME="$tmp_root/home/.cache" \
+        XDG_RUNTIME_DIR="$runtime_dir" \
+        "$0"; then
+        result=0
+    else
+        result=$?
+    fi
+    document_mount="$runtime_dir/doc/by-app"
+    if [[ -d "$document_mount" ]] && command -v fusermount3 >/dev/null 2>&1; then
+        fusermount3 -uz "$document_mount" 2>/dev/null || true
+    fi
+    if ! rm -rf "$tmp_root"; then
+        echo "GNOME test temporary directory could not be fully removed: $tmp_root" >&2
+    fi
+    exit "$result"
+fi
+
+runner_home="$WAYCONTROL_GNOME_RUNNER_HOME"
+tmp_root="$WAYCONTROL_GNOME_TMP_ROOT"
 export RUSTUP_HOME="${RUSTUP_HOME:-$runner_home/.rustup}"
 export CARGO_HOME="${CARGO_HOME:-$runner_home/.cargo}"
-tmp_root="$(mktemp -d)"
 cleanup() {
     if [[ -n "${shell_pid:-}" ]]; then kill "$shell_pid" 2>/dev/null || true; fi
     if [[ -n "${weston_pid:-}" ]]; then kill "$weston_pid" 2>/dev/null || true; fi
     if [[ -n "${xvfb_pid:-}" ]]; then kill "$xvfb_pid" 2>/dev/null || true; fi
-    document_mount="$tmp_root/runtime/doc/by-app"
-    if [[ -d "$document_mount" ]]; then
-        if command -v fusermount3 >/dev/null 2>&1; then
-            fusermount3 -u "$document_mount" 2>/dev/null || true
-        elif command -v fusermount >/dev/null 2>&1; then
-            fusermount -u "$document_mount" 2>/dev/null || true
-        else
-            umount -l "$document_mount" 2>/dev/null || true
-        fi
-    fi
-    rm -rf "$tmp_root"
 }
 trap cleanup EXIT
 
-export HOME="$tmp_root/home"
-export XDG_CONFIG_HOME="$HOME/.config"
-export XDG_DATA_HOME="$HOME/.local/share"
-export XDG_CACHE_HOME="$HOME/.cache"
-export XDG_RUNTIME_DIR="$tmp_root/runtime"
 export XDG_CURRENT_DESKTOP=GNOME
 export XDG_SESSION_DESKTOP=gnome
-mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME/gnome-shell/extensions" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR"
+mkdir -p "$XDG_DATA_HOME/gnome-shell/extensions"
 chmod 700 "$XDG_RUNTIME_DIR"
 
 export DISPLAY=:99
