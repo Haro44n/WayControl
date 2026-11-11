@@ -127,6 +127,12 @@ impl CompositorBackend for HyprlandAdapter {
             .await
             .map_err(|e| e.to_string())
     }
+    async fn center_floating_window(&self, id: &str) -> Result<(), String> {
+        self.client()?
+            .center_floating_window(id)
+            .await
+            .map_err(|e| e.to_string())
+    }
     async fn close_window(&self, id: &str) -> Result<(), String> {
         self.client()?
             .close_window(id)
@@ -174,5 +180,6 @@ mod tests {
         assert!(capabilities.events);
         assert!(capabilities.toggle_pinned);
         assert!(capabilities.move_window_to_monitor);
+        assert!(capabilities.center_floating_window);
     }
 }

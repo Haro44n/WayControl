@@ -40,6 +40,8 @@ pub enum Operation {
     ToggleFullscreen { address: String },
     #[serde(rename = "window.toggle_pinned")]
     TogglePinned { address: String },
+    #[serde(rename = "window.center_floating")]
+    CenterFloatingWindow { address: String },
     #[serde(rename = "window.close")]
     CloseWindow { address: String },
     #[serde(rename = "monitor.list")]
@@ -166,6 +168,7 @@ impl RequestEnvelope {
             | Operation::ToggleFloating { address }
             | Operation::ToggleFullscreen { address }
             | Operation::TogglePinned { address }
+            | Operation::CenterFloatingWindow { address }
             | Operation::CloseWindow { address } => Some(address),
             _ => None,
         };
@@ -382,6 +385,22 @@ mod tests {
         assert_eq!(
             unsafe_monitor.validate(),
             Err(ProtocolError::InvalidMonitorName)
+        );
+    }
+
+    #[test]
+    fn center_floating_window_uses_a_typed_action_name() {
+        let request = RequestEnvelope {
+            version: PROTOCOL_VERSION,
+            id: "center".into(),
+            operation: Operation::CenterFloatingWindow {
+                address: "0xabc".into(),
+            },
+        };
+        assert_eq!(request.validate(), Ok(()));
+        assert_eq!(
+            serde_json::to_value(request).unwrap()["type"],
+            "window.center_floating"
         );
     }
 

@@ -109,6 +109,7 @@ pub struct CompositorCapabilities {
     pub toggle_floating: bool,
     pub toggle_fullscreen: bool,
     pub toggle_pinned: bool,
+    pub center_floating_window: bool,
     pub close_window: bool,
     pub monitors: bool,
     pub monitor_power: bool,
@@ -128,6 +129,7 @@ impl CompositorCapabilities {
         toggle_floating: true,
         toggle_fullscreen: true,
         toggle_pinned: true,
+        center_floating_window: true,
         close_window: true,
         monitors: true,
         monitor_power: true,
@@ -146,6 +148,7 @@ impl CompositorCapabilities {
             toggle_floating: false,
             toggle_fullscreen: false,
             toggle_pinned: false,
+            center_floating_window: false,
             close_window: false,
             monitors: false,
             monitor_power: false,
@@ -174,6 +177,9 @@ pub trait CompositorBackend: Send + Sync + 'static {
     async fn toggle_fullscreen(&self, id: &str) -> Result<(), String>;
     async fn toggle_pinned(&self, _id: &str) -> Result<(), String> {
         Err("pinning windows is unsupported by this compositor".into())
+    }
+    async fn center_floating_window(&self, _id: &str) -> Result<(), String> {
+        Err("centering floating windows is unsupported by this compositor".into())
     }
     async fn close_window(&self, id: &str) -> Result<(), String>;
     async fn monitors(&self) -> Result<Vec<Monitor>, String>;

@@ -259,6 +259,7 @@ impl CompositorBackend for NiriAdapter {
             // while WayControl's UI needs that state to label a toggle safely.
             toggle_fullscreen: false,
             toggle_pinned: false,
+            center_floating_window: false,
             close_window: true,
             monitors: true,
             monitor_power: false,

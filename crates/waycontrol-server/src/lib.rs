@@ -570,6 +570,12 @@ impl CompositorBackend for WaylandBackend {
             _ => Err("window pinning is unsupported by this compositor".into()),
         }
     }
+    async fn center_floating_window(&self, id: &str) -> Result<(), String> {
+        match self {
+            Self::Hyprland(adapter) => adapter.center_floating_window(id).await,
+            _ => Err("centering floating windows is unsupported by this compositor".into()),
+        }
+    }
     async fn close_window(&self, id: &str) -> Result<(), String> {
         match self {
             Self::Hyprland(adapter) => adapter.close_window(id).await,
@@ -1842,6 +1848,12 @@ async fn request(
             .toggle_pinned(&address)
             .await
             .map(|()| json!({})),
+        Operation::CenterFloatingWindow { address } => state
+            .0
+            .compositor
+            .center_floating_window(&address)
+            .await
+            .map(|()| json!({})),
         Operation::CloseWindow { address } => state
             .0
             .compositor
@@ -1960,6 +1972,9 @@ fn required_capability(operation: &Operation) -> Option<fn(&CompositorCapabiliti
         Operation::ToggleFloating { .. } => Some(|capabilities| capabilities.toggle_floating),
         Operation::ToggleFullscreen { .. } => Some(|capabilities| capabilities.toggle_fullscreen),
         Operation::TogglePinned { .. } => Some(|capabilities| capabilities.toggle_pinned),
+        Operation::CenterFloatingWindow { .. } => {
+            Some(|capabilities| capabilities.center_floating_window)
+        }
         Operation::CloseWindow { .. } => Some(|capabilities| capabilities.close_window),
         Operation::ListMonitors => Some(|capabilities| capabilities.monitors),
         Operation::SetMonitorPower { .. } => Some(|capabilities| capabilities.monitor_power),
@@ -3467,6 +3482,13 @@ mod tests {
         )
         .await;
         assert_eq!(move_monitor.status(), StatusCode::NOT_IMPLEMENTED);
+        let center = send(
+            app.clone(),
+            Some(&token),
+            r#"{"version":1,"id":"center","type":"window.center_floating","payload":{"address":"0xabc"}}"#,
+        )
+        .await;
+        assert_eq!(center.status(), StatusCode::NOT_IMPLEMENTED);
         let lock = send(
             app,
             Some(&token),

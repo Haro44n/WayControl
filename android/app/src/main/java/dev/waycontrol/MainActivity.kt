@@ -620,6 +620,7 @@ private fun HomeQuickActions(
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (capabilities.togglePinned && item.optBoolean("floating") && item.has("pinned") && !item.isNull("pinned")) Button(onClick = { action("window.toggle_pinned", address, JSONObject()) }) { Text(if (item.optBoolean("pinned")) "Unpin" else "Pin") }
+                    if (capabilities.centerFloatingWindow && item.optBoolean("floating")) Button(onClick = { action("window.center_floating", address, JSONObject()) }) { Text("Center") }
                     if (capabilities.moveWindow && capabilities.workspaces) Button(onClick = { menuOpen = true }) { Text("Move to workspace") }
                     androidx.compose.material3.DropdownMenu(expanded = menuOpen && capabilities.moveWindow && capabilities.workspaces, onDismissRequest = { menuOpen = false }) {
                         for (w in 0 until workspaces.length()) {

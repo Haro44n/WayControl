@@ -410,6 +410,47 @@ impl HyprlandClient {
         .await
     }
 
+    pub async fn center_floating_window(&self, address: &str) -> Result<(), HyprlandError> {
+        let window = self
+            .clients()
+            .await?
+            .into_iter()
+            .find(|window| window.address == address)
+            .ok_or_else(|| HyprlandError::CommandRejected("window no longer exists".into()))?;
+        if window.floating != Some(true) {
+            return Err(HyprlandError::CommandRejected(
+                "Hyprland can center only floating windows".into(),
+            ));
+        }
+
+        let response = self
+            .request(&format!(
+                "eval hl.dispatch(hl.dsp.window.center({{ window = \"address:{address}\" }}))"
+            ))
+            .await?;
+        if response.trim() == "ok" {
+            return Ok(());
+        }
+        let response_lower = response.to_ascii_lowercase();
+        if response_lower.contains("unknown")
+            || response_lower.contains("not supported")
+            || response_lower.contains("only supported with")
+        {
+            let focused = self
+                .request(&format!("dispatch focuswindow address:{address}"))
+                .await?;
+            if focused.trim() != "ok" {
+                return Err(HyprlandError::CommandRejected(focused.trim().to_owned()));
+            }
+            let centered = self.request("dispatch centerwindow 1").await?;
+            if centered.trim() == "ok" {
+                return Ok(());
+            }
+            return Err(HyprlandError::CommandRejected(centered.trim().to_owned()));
+        }
+        Err(HyprlandError::CommandRejected(response.trim().to_owned()))
+    }
+
     async fn require_window(&self, address: &str) -> Result<(), HyprlandError> {
         if !valid_window_address(address) {
             return Err(HyprlandError::InvalidResponse("invalid window address"));
@@ -753,6 +794,72 @@ mod tests {
             .move_window_to_monitor("0xabc", "DP-1")
             .await
             .unwrap();
+        server.await.unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn centering_floating_window_targets_the_requested_address() {
+        use tokio::{io::AsyncReadExt, net::UnixListener};
+
+        let dir = std::env::temp_dir().join(format!("waycontrol-center-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let listener = UnixListener::bind(dir.join(".socket.sock")).unwrap();
+        let server = tokio::spawn(async move {
+            for (expected, response) in [
+                ("j/clients", r#"[{"address":"0xabc","floating":true}]"#),
+                ("j/monitors", "[]"),
+                ("j/activewindow", "{}"),
+                (
+                    "eval hl.dispatch(hl.dsp.window.center({ window = \"address:0xabc\" }))",
+                    "ok",
+                ),
+            ] {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = [0; 256];
+                let size = stream.read(&mut request).await.unwrap();
+                assert_eq!(&request[..size], expected.as_bytes());
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+
+        HyprlandClient::at_socket_dir(dir.clone())
+            .center_floating_window("0xabc")
+            .await
+            .unwrap();
+        server.await.unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn centering_rejects_tiled_windows_without_dispatch() {
+        use tokio::{io::AsyncReadExt, net::UnixListener};
+
+        let dir =
+            std::env::temp_dir().join(format!("waycontrol-center-tiled-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let listener = UnixListener::bind(dir.join(".socket.sock")).unwrap();
+        let server = tokio::spawn(async move {
+            for (expected, response) in [
+                ("j/clients", r#"[{"address":"0xabc","floating":false}]"#),
+                ("j/monitors", "[]"),
+                ("j/activewindow", "{}"),
+            ] {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = [0; 256];
+                let size = stream.read(&mut request).await.unwrap();
+                assert_eq!(&request[..size], expected.as_bytes());
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+
+        let error = HyprlandClient::at_socket_dir(dir.clone())
+            .center_floating_window("0xabc")
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("floating"));
         server.await.unwrap();
         std::fs::remove_dir_all(dir).unwrap();
     }
