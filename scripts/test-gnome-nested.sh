@@ -9,6 +9,7 @@ tmp_root="$(mktemp -d)"
 cleanup() {
     if [[ -n "${shell_pid:-}" ]]; then kill "$shell_pid" 2>/dev/null || true; fi
     if [[ -n "${weston_pid:-}" ]]; then kill "$weston_pid" 2>/dev/null || true; fi
+    if [[ -n "${xvfb_pid:-}" ]]; then kill "$xvfb_pid" 2>/dev/null || true; fi
     rm -rf "$tmp_root"
 }
 trap cleanup EXIT
@@ -20,6 +21,12 @@ export XDG_CACHE_HOME="$HOME/.cache"
 export XDG_RUNTIME_DIR="$tmp_root/runtime"
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME/gnome-shell/extensions" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR"
 chmod 700 "$XDG_RUNTIME_DIR"
+
+export DISPLAY=:99
+Xvfb "$DISPLAY" -screen 0 1280x720x24 -nolisten tcp >"$tmp_root/xvfb.log" 2>&1 &
+xvfb_pid=$!
+sleep 0.5
+kill -0 "$xvfb_pid" 2>/dev/null || { cat "$tmp_root/xvfb.log"; exit 1; }
 
 extension_id=waycontrol@haro44n.github.io
 extension_dir="$XDG_DATA_HOME/gnome-shell/extensions/$extension_id"
