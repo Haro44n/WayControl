@@ -305,6 +305,7 @@ impl CompositorBackend for SwayAdapter {
             windows: true,
             focus_window: true,
             move_window: true,
+            move_window_to_monitor: false,
             toggle_floating: true,
             toggle_fullscreen: true,
             toggle_pinned: false,

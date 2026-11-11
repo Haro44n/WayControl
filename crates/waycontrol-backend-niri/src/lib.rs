@@ -253,6 +253,7 @@ impl CompositorBackend for NiriAdapter {
             windows: true,
             focus_window: true,
             move_window: true,
+            move_window_to_monitor: false,
             toggle_floating: true,
             // Niri's current IPC Window model does not expose fullscreen state,
             // while WayControl's UI needs that state to label a toggle safely.

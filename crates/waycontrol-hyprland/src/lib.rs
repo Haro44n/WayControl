@@ -317,6 +317,55 @@ impl HyprlandClient {
         ).await
     }
 
+    pub async fn move_window_to_monitor(
+        &self,
+        address: &str,
+        monitor: &str,
+    ) -> Result<(), HyprlandError> {
+        if !valid_monitor_name(monitor) {
+            return Err(HyprlandError::InvalidResponse("invalid monitor name"));
+        }
+        self.require_window(address).await?;
+        if !self
+            .monitors()
+            .await?
+            .iter()
+            .any(|item| item.name == monitor)
+        {
+            return Err(HyprlandError::CommandRejected(
+                "monitor no longer exists".into(),
+            ));
+        }
+
+        let lua = format!(
+            "hl.dispatch(hl.dsp.window.move({{ monitor = \"{monitor}\", window = \"address:{address}\", follow = false }}))"
+        );
+        let response = self.request(&format!("eval {lua}")).await?;
+        if response.trim() == "ok" {
+            return Ok(());
+        }
+        let response_lower = response.to_ascii_lowercase();
+        if response_lower.contains("unknown")
+            || response_lower.contains("not supported")
+            || response_lower.contains("only supported with")
+        {
+            let focused = self
+                .request(&format!("dispatch focuswindow address:{address}"))
+                .await?;
+            if focused.trim() != "ok" {
+                return Err(HyprlandError::CommandRejected(focused.trim().to_owned()));
+            }
+            let moved = self
+                .request(&format!("dispatch movewindow mon:{monitor} silent"))
+                .await?;
+            if moved.trim() == "ok" {
+                return Ok(());
+            }
+            return Err(HyprlandError::CommandRejected(moved.trim().to_owned()));
+        }
+        Err(HyprlandError::CommandRejected(response.trim().to_owned()))
+    }
+
     pub async fn toggle_floating(&self, address: &str) -> Result<(), HyprlandError> {
         self.require_window(address).await?;
         self.dispatch_compatible(
@@ -669,6 +718,41 @@ mod tests {
             .toggle_pinned("0xabc")
             .await;
         assert!(result.unwrap_err().to_string().contains("floating"));
+        server.await.unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn moving_a_window_to_monitor_uses_an_addressed_validated_dispatcher() {
+        use tokio::{io::AsyncReadExt, net::UnixListener};
+
+        let dir = std::env::temp_dir().join(format!("waycontrol-monitor-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let listener = UnixListener::bind(dir.join(".socket.sock")).unwrap();
+        let server = tokio::spawn(async move {
+            for (expected, response) in [
+                ("j/clients", r#"[{"address":"0xabc","floating":false}]"#),
+                ("j/monitors", "[]"),
+                ("j/activewindow", "{}"),
+                ("j/monitors", r#"[{"name":"DP-1","id":0}]"#),
+                (
+                    "eval hl.dispatch(hl.dsp.window.move({ monitor = \"DP-1\", window = \"address:0xabc\", follow = false }))",
+                    "ok",
+                ),
+            ] {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = [0; 256];
+                let size = stream.read(&mut request).await.unwrap();
+                assert_eq!(&request[..size], expected.as_bytes());
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+
+        HyprlandClient::at_socket_dir(dir.clone())
+            .move_window_to_monitor("0xabc", "DP-1")
+            .await
+            .unwrap();
         server.await.unwrap();
         std::fs::remove_dir_all(dir).unwrap();
     }

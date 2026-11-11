@@ -538,6 +538,12 @@ impl CompositorBackend for WaylandBackend {
             _ => Err(self.unsupported()),
         }
     }
+    async fn move_window_to_monitor(&self, id: &str, monitor: &str) -> Result<(), String> {
+        match self {
+            Self::Hyprland(adapter) => adapter.move_window_to_monitor(id, monitor).await,
+            _ => Err("moving windows between monitors is unsupported by this compositor".into()),
+        }
+    }
     async fn toggle_floating(&self, id: &str) -> Result<(), String> {
         match self {
             Self::Hyprland(adapter) => adapter.toggle_floating(id).await,
@@ -1812,6 +1818,12 @@ async fn request(
             .move_window(&address, &workspace_id)
             .await
             .map(|()| json!({})),
+        Operation::MoveWindowToMonitor { address, monitor } => state
+            .0
+            .compositor
+            .move_window_to_monitor(&address, &monitor)
+            .await
+            .map(|()| json!({})),
         Operation::ToggleFloating { address } => state
             .0
             .compositor
@@ -1942,6 +1954,9 @@ fn required_capability(operation: &Operation) -> Option<fn(&CompositorCapabiliti
         Operation::ListWindows => Some(|capabilities| capabilities.windows),
         Operation::FocusWindow { .. } => Some(|capabilities| capabilities.focus_window),
         Operation::MoveWindow { .. } => Some(|capabilities| capabilities.move_window),
+        Operation::MoveWindowToMonitor { .. } => {
+            Some(|capabilities| capabilities.move_window_to_monitor)
+        }
         Operation::ToggleFloating { .. } => Some(|capabilities| capabilities.toggle_floating),
         Operation::ToggleFullscreen { .. } => Some(|capabilities| capabilities.toggle_fullscreen),
         Operation::TogglePinned { .. } => Some(|capabilities| capabilities.toggle_pinned),
@@ -3445,6 +3460,13 @@ mod tests {
         )
         .await;
         assert_eq!(pin.status(), StatusCode::NOT_IMPLEMENTED);
+        let move_monitor = send(
+            app.clone(),
+            Some(&token),
+            r#"{"version":1,"id":"move-monitor","type":"window.move_monitor","payload":{"address":"0xabc","monitor":"DP-1"}}"#,
+        )
+        .await;
+        assert_eq!(move_monitor.status(), StatusCode::NOT_IMPLEMENTED);
         let lock = send(
             app,
             Some(&token),

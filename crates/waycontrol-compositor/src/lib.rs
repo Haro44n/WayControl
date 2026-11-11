@@ -105,6 +105,7 @@ pub struct CompositorCapabilities {
     pub windows: bool,
     pub focus_window: bool,
     pub move_window: bool,
+    pub move_window_to_monitor: bool,
     pub toggle_floating: bool,
     pub toggle_fullscreen: bool,
     pub toggle_pinned: bool,
@@ -123,6 +124,7 @@ impl CompositorCapabilities {
         windows: true,
         focus_window: true,
         move_window: true,
+        move_window_to_monitor: true,
         toggle_floating: true,
         toggle_fullscreen: true,
         toggle_pinned: true,
@@ -140,6 +142,7 @@ impl CompositorCapabilities {
             windows: false,
             focus_window: false,
             move_window: false,
+            move_window_to_monitor: false,
             toggle_floating: false,
             toggle_fullscreen: false,
             toggle_pinned: false,
@@ -164,6 +167,9 @@ pub trait CompositorBackend: Send + Sync + 'static {
     async fn switch_workspace(&self, id: &WorkspaceId) -> Result<(), String>;
     async fn focus_window(&self, id: &str) -> Result<(), String>;
     async fn move_window(&self, id: &str, workspace_id: &WorkspaceId) -> Result<(), String>;
+    async fn move_window_to_monitor(&self, _id: &str, _monitor: &str) -> Result<(), String> {
+        Err("moving windows between monitors is unsupported by this compositor".into())
+    }
     async fn toggle_floating(&self, id: &str) -> Result<(), String>;
     async fn toggle_fullscreen(&self, id: &str) -> Result<(), String>;
     async fn toggle_pinned(&self, _id: &str) -> Result<(), String> {

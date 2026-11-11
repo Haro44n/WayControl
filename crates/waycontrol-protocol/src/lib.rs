@@ -32,6 +32,8 @@ pub enum Operation {
         address: String,
         workspace_id: WorkspaceId,
     },
+    #[serde(rename = "window.move_monitor")]
+    MoveWindowToMonitor { address: String, monitor: String },
     #[serde(rename = "window.toggle_floating")]
     ToggleFloating { address: String },
     #[serde(rename = "window.toggle_fullscreen")]
@@ -160,6 +162,7 @@ impl RequestEnvelope {
         let address = match &self.operation {
             Operation::FocusWindow { address }
             | Operation::MoveWindow { address, .. }
+            | Operation::MoveWindowToMonitor { address, .. }
             | Operation::ToggleFloating { address }
             | Operation::ToggleFullscreen { address }
             | Operation::TogglePinned { address }
@@ -203,14 +206,14 @@ impl RequestEnvelope {
             return Err(ProtocolError::InvalidDesktopEntryId);
         }
         if let Operation::SetMonitorPower { monitor, .. } = &self.operation {
-            if monitor.is_empty()
-                || monitor.len() > 64
-                || !monitor
-                    .bytes()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-' | b'.' | b':'))
-            {
+            if !valid_monitor_id(monitor) {
                 return Err(ProtocolError::InvalidMonitorName);
             }
+        }
+        if let Operation::MoveWindowToMonitor { monitor, .. } = &self.operation
+            && !valid_monitor_id(monitor)
+        {
+            return Err(ProtocolError::InvalidMonitorName);
         }
         if let Operation::SetVolume { percent } = self.operation
             && percent > 100
@@ -243,6 +246,14 @@ impl RequestEnvelope {
         }
         Ok(())
     }
+}
+
+fn valid_monitor_id(monitor: &str) -> bool {
+    !monitor.is_empty()
+        && monitor.len() <= 64
+        && monitor
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':'))
 }
 
 #[cfg(test)]
@@ -353,6 +364,24 @@ mod tests {
         assert_eq!(
             serde_json::to_value(request).unwrap()["type"],
             "window.toggle_pinned"
+        );
+    }
+
+    #[test]
+    fn move_window_to_monitor_uses_a_bounded_typed_operation() {
+        let request: RequestEnvelope = serde_json::from_str(
+            r#"{"version":1,"id":"monitor","type":"window.move_monitor","payload":{"address":"0xabc","monitor":"DP-1"}}"#,
+        )
+        .unwrap();
+        assert_eq!(request.validate(), Ok(()));
+
+        let unsafe_monitor: RequestEnvelope = serde_json::from_str(
+            r#"{"version":1,"id":"monitor","type":"window.move_monitor","payload":{"address":"0xabc","monitor":"DP-1;shutdown"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            unsafe_monitor.validate(),
+            Err(ProtocolError::InvalidMonitorName)
         );
     }
 

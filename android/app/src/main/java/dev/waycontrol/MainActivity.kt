@@ -291,7 +291,7 @@ private fun WayControlApp(store: SecureConnectionStore) {
                     Destination.Workspaces -> WorkspaceScreen(snapshot.workspaces, status, capabilities.switchWorkspace) { id ->
                         scope.launch { runCatching { withContext(Dispatchers.IO) { WayControlClient(endpoint, pin, token).request("workspace.switch", JSONObject().put("workspace_id", id)) } }.onFailure { error = it.message } }
                     }
-                    Destination.Windows -> WindowScreen(snapshot.windows, snapshot.workspaces, status, capabilities) { operation, address, payload ->
+                    Destination.Windows -> WindowScreen(snapshot.windows, snapshot.workspaces, snapshot.monitors, status, capabilities) { operation, address, payload ->
                         scope.launch { runCatching { withContext(Dispatchers.IO) { WayControlClient(endpoint, pin, token).request(operation, payload.put("address", address)) } }.onFailure { error = it.message } }
                     }
                     Destination.System -> SystemScreenWithHistory(snapshot.desktop, snapshot.monitors, status, capabilities, snapshot.audio, snapshot.media, telemetryHistory, mediaArtwork) { operation, payload ->
@@ -598,7 +598,7 @@ private fun HomeQuickActions(
     }
 }
 
-@Composable private fun WindowScreen(items: JSONArray, workspaces: JSONArray, status: String, capabilities: CompositorCapabilities, action: (String, String, JSONObject) -> Unit) {
+@Composable private fun WindowScreen(items: JSONArray, workspaces: JSONArray, monitors: JSONArray, status: String, capabilities: CompositorCapabilities, action: (String, String, JSONObject) -> Unit) {
     Header("Windows", status)
     if (items.length() == 0) Empty("No open windows", status)
     var closeTarget by remember { mutableStateOf<String?>(null) }
@@ -606,18 +606,20 @@ private fun HomeQuickActions(
         val item = items.optJSONObject(i) ?: continue
         val address = item.optString("address")
         var menuOpen by remember(address) { mutableStateOf(false) }
+        var monitorMenuOpen by remember(address) { mutableStateOf(false) }
         Card {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(item.optString("title", "Untitled window"), color = MainText, fontWeight = FontWeight.Medium)
-                Text("${item.optString("app_id", "Unknown app")} · workspace ${item.optString("workspace_id", "—")}", color = SecondaryText)
+                val monitorName = item.optString("monitor").takeIf { it.isNotBlank() && it != "null" } ?: "—"
+                Text("${item.optString("app_id", "Unknown app")} · workspace ${item.optString("workspace_id", "—")} · $monitorName", color = SecondaryText)
                 if (item.optBoolean("focused")) Text("FOCUSED", color = Color(0xFFB9567B), style = MaterialTheme.typography.labelSmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (capabilities.focusWindow) Button(onClick = { action("window.focus", address, JSONObject()) }) { Text("Focus") }
                     if (capabilities.toggleFloating) Button(onClick = { action("window.toggle_floating", address, JSONObject()) }) { Text(if (item.optBoolean("floating")) "Tile" else "Float") }
                     if (capabilities.toggleFullscreen) Button(onClick = { action("window.toggle_fullscreen", address, JSONObject()) }) { Text(if (item.optBoolean("fullscreen")) "Exit full screen" else "Full screen") }
-                    if (capabilities.togglePinned && item.optBoolean("floating") && item.has("pinned") && !item.isNull("pinned")) Button(onClick = { action("window.toggle_pinned", address, JSONObject()) }) { Text(if (item.optBoolean("pinned")) "Unpin" else "Pin") }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (capabilities.togglePinned && item.optBoolean("floating") && item.has("pinned") && !item.isNull("pinned")) Button(onClick = { action("window.toggle_pinned", address, JSONObject()) }) { Text(if (item.optBoolean("pinned")) "Unpin" else "Pin") }
                     if (capabilities.moveWindow && capabilities.workspaces) Button(onClick = { menuOpen = true }) { Text("Move to workspace") }
                     androidx.compose.material3.DropdownMenu(expanded = menuOpen && capabilities.moveWindow && capabilities.workspaces, onDismissRequest = { menuOpen = false }) {
                         for (w in 0 until workspaces.length()) {
@@ -626,6 +628,19 @@ private fun HomeQuickActions(
                             androidx.compose.material3.DropdownMenuItem(
                                 text = { Text(workspace.optString("name", id.toString())) },
                                 onClick = { menuOpen = false; action("window.move", address, JSONObject().put("workspace_id", id)) }
+                            )
+                        }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (capabilities.moveWindowToMonitor && capabilities.monitors) Button(onClick = { monitorMenuOpen = true }) { Text("Move to monitor") }
+                    androidx.compose.material3.DropdownMenu(expanded = monitorMenuOpen && capabilities.moveWindowToMonitor && capabilities.monitors, onDismissRequest = { monitorMenuOpen = false }) {
+                        for (m in 0 until monitors.length()) {
+                            val monitor = monitors.optJSONObject(m) ?: continue
+                            val name = monitor.optString("name").takeIf { it.isNotBlank() } ?: continue
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = { Text(name) },
+                                onClick = { monitorMenuOpen = false; action("window.move_monitor", address, JSONObject().put("monitor", name)) }
                             )
                         }
                     }

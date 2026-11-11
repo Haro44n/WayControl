@@ -103,6 +103,12 @@ impl CompositorBackend for HyprlandAdapter {
             .await
             .map_err(|e| e.to_string())
     }
+    async fn move_window_to_monitor(&self, id: &str, monitor: &str) -> Result<(), String> {
+        self.client()?
+            .move_window_to_monitor(id, monitor)
+            .await
+            .map_err(|e| e.to_string())
+    }
     async fn toggle_floating(&self, id: &str) -> Result<(), String> {
         self.client()?
             .toggle_floating(id)
@@ -167,5 +173,6 @@ mod tests {
         assert!(capabilities.windows);
         assert!(capabilities.events);
         assert!(capabilities.toggle_pinned);
+        assert!(capabilities.move_window_to_monitor);
     }
 }

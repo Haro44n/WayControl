@@ -1,6 +1,7 @@
 # WayControl progress
 
 - Hyprland pinning checkpoint (2026-11-11): added nullable pinned-state reporting, the typed `window.toggle_pinned` operation, Hyprland-only capability negotiation, floating-window validation, Android Pin/Unpin controls, and documentation. `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` passed. GitHub Actions run [43089778778](https://github.com/Haro44n/WayControl/actions/runs/43089778778) passed Rust, Sway/Niri/KWin live, nested GNOME, Android unit/lint/APK, and Android 16 instrumentation jobs. Tiled windows are rejected before dispatcher execution.
+- Hyprland move-to-monitor checkpoint (2026-11-11): added bounded typed `window.move_monitor`, monitor-name validation, current-output verification, an addressed Lua dispatcher with a validated legacy IPC fallback, capability negotiation, and an Android monitor selector. `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, and `git diff --check` passed. Local Android tests remain unavailable because the Android SDK is not configured; the pushed Actions run covers Android unit/lint/APK and emulator checks.
 
 **Your desktop. Your control.**
 
