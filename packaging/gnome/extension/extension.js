@@ -126,9 +126,9 @@ export default class WayControlGnomeBridge extends Extension {
     }
 
     ListWorkspaces() {
-        const workspaces = global.workspace_manager.get_workspaces();
-        const active = global.workspace_manager.get_active_workspace();
-        return JSON.stringify(workspaces.slice(0, MAX_WORKSPACES).map(workspace => ({
+        const manager = global.workspace_manager;
+        const active = manager.get_active_workspace();
+        return JSON.stringify(this._workspaces().map(workspace => ({
             id: this._workspaceId(workspace),
             name: `Workspace ${workspace.index() + 1}`,
             monitor: null,
@@ -201,8 +201,20 @@ export default class WayControlGnomeBridge extends Extension {
     _workspaceFor(id) {
         if (!WORKSPACE_ID_RE.test(id))
             return null;
-        return global.workspace_manager.get_workspaces()
+        return this._workspaces()
             .find(workspace => this._workspaceId(workspace) === id) ?? null;
+    }
+
+    _workspaces() {
+        const manager = global.workspace_manager;
+        const count = Math.min(manager.get_n_workspaces(), MAX_WORKSPACES);
+        const workspaces = [];
+        for (let index = 0; index < count; index++) {
+            const workspace = manager.get_workspace_by_index(index);
+            if (workspace)
+                workspaces.push(workspace);
+        }
+        return workspaces;
     }
 
     _windows() {

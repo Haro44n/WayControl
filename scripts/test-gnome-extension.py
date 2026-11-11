@@ -42,6 +42,8 @@ assert [arg.attrib["type"] for arg in signal.findall("arg")] == ["s"]
 
 assert "Gio.bus_own_name" in source and "Gio.DBusExportedObject.wrapJSObject" in source
 assert "get_stable_sequence" in source and "_workspaceFor(id)" in source and "_windowFor(id)" in source
+assert "get_n_workspaces()" in source and "get_workspace_by_index(index)" in source
+assert "get_workspaces()" not in source
 assert "make_fullscreen" in source and "unmake_fullscreen" in source
 assert "eval(" not in source and "imports.misc" not in source
 assert "toggle_floating" not in source.lower()
