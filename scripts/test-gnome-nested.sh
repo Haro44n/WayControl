@@ -2,6 +2,9 @@
 set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+runner_home="$HOME"
+export RUSTUP_HOME="${RUSTUP_HOME:-$runner_home/.rustup}"
+export CARGO_HOME="${CARGO_HOME:-$runner_home/.cargo}"
 tmp_root="$(mktemp -d)"
 cleanup() {
     if [[ -n "${shell_pid:-}" ]]; then kill "$shell_pid" 2>/dev/null || true; fi
