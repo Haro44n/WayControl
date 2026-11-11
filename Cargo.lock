@@ -1622,6 +1622,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "waycontrol-backend-gnome"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "waycontrol-compositor",
+ "waycontrol-core",
+ "zbus",
+]
+
+[[package]]
 name = "waycontrol-backend-hyprland"
 version = "0.1.0"
 dependencies = [
@@ -1727,6 +1741,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tower",
+ "waycontrol-backend-gnome",
  "waycontrol-backend-hyprland",
  "waycontrol-backend-kwin",
  "waycontrol-backend-niri",

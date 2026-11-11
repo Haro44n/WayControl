@@ -18,6 +18,7 @@ waycontrol-backend-hyprland = { path = "../waycontrol-backend-hyprland" }
 waycontrol-backend-sway = { path = "../waycontrol-backend-sway" }
 waycontrol-backend-niri = { path = "../waycontrol-backend-niri" }
 waycontrol-backend-kwin = { path = "../waycontrol-backend-kwin" }
+waycontrol-backend-gnome = { path = "../waycontrol-backend-gnome" }
 axum.workspace = true
 axum-server.workspace = true
 async-trait.workspace = true

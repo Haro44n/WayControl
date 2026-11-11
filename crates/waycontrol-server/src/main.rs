@@ -70,7 +70,7 @@ async fn inspect() -> Result<(), Box<dyn std::error::Error>> {
     let cpu = cpu_first
         .zip(cpu_second)
         .and_then(|(a, b)| waycontrol_telemetry::cpu_percent(a.total, b.total, a.idle, b.idle));
-    let backend = WaylandBackend::detect();
+    let backend = WaylandBackend::detect_async().await;
     let compositor = match backend.workspaces().await {
         Ok(workspaces) => serde_json::json!({"available":true,"workspaces":workspaces}),
         Err(error) => serde_json::json!({"available":false,"error":error}),
@@ -95,7 +95,7 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     let bind = socket_address_from_env()?;
     let data_dir = data_dir()?;
     let (cert_path, key_path, fingerprint) = ensure_server_certificate(&data_dir, bind)?;
-    let compositor = Arc::new(WaylandBackend::detect());
+    let compositor = Arc::new(WaylandBackend::detect_async().await);
     let system: Arc<dyn SystemControlBackend> = Arc::new(HostSystemControls);
     let state = AppState::new(compositor, system, &data_dir).await?;
     let admin_path = admin_socket_path()?;

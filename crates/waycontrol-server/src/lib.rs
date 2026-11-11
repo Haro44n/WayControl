@@ -37,6 +37,7 @@ use tokio::{
     io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt},
     sync::Semaphore,
 };
+use waycontrol_backend_gnome::GnomeAdapter;
 use waycontrol_backend_hyprland::HyprlandAdapter;
 use waycontrol_backend_kwin::KWinAdapter;
 use waycontrol_backend_niri::NiriAdapter;
@@ -387,10 +388,29 @@ pub enum WaylandBackend {
     Sway(SwayAdapter),
     Niri(NiriAdapter),
     KWin(KWinAdapter),
+    Gnome(GnomeAdapter),
     Unsupported(CompositorInfo),
 }
 
 impl WaylandBackend {
+    /// Detect the compositor and complete asynchronous GNOME extension negotiation.
+    pub async fn detect_async() -> Self {
+        let env = std::env::vars().collect::<Vec<_>>();
+        let kind = detect_compositor();
+        let discovered_hyprland =
+            kind == CompositorKind::Unknown && HyprlandAdapter::can_discover_active_session();
+        if kind == CompositorKind::Gnome {
+            if !gnome_wayland_session(&env) {
+                return Self::Unsupported(CompositorInfo::detected(kind));
+            }
+            return match GnomeAdapter::connect().await {
+                Ok(adapter) => Self::Gnome(adapter),
+                Err(_) => Self::Unsupported(CompositorInfo::detected(kind)),
+            };
+        }
+        Self::for_detected_kind(kind, discovered_hyprland)
+    }
+
     pub fn detect() -> Self {
         let kind = detect_compositor();
         let discovered_hyprland =
@@ -420,11 +440,11 @@ impl WaylandBackend {
 
     fn unsupported(&self) -> String {
         match self {
-            Self::Hyprland(_) | Self::Sway(_) | Self::Niri(_) | Self::KWin(_) => {
+            Self::Hyprland(_) | Self::Sway(_) | Self::Niri(_) | Self::KWin(_) | Self::Gnome(_) => {
                 "unreachable unsupported compositor operation".into()
             }
             Self::Unsupported(info) => format!(
-                "{} was detected, but its WayControl compositor adapter is not implemented",
+                "{} was detected, but its WayControl compositor bridge is unavailable",
                 info.name
             ),
         }
@@ -439,6 +459,7 @@ impl CompositorBackend for WaylandBackend {
             Self::Sway(adapter) => adapter.info(),
             Self::Niri(adapter) => adapter.info(),
             Self::KWin(adapter) => adapter.info(),
+            Self::Gnome(adapter) => adapter.info(),
             Self::Unsupported(info) => info.clone(),
         }
     }
@@ -449,6 +470,7 @@ impl CompositorBackend for WaylandBackend {
             Self::Sway(adapter) => adapter.capabilities(),
             Self::Niri(adapter) => adapter.capabilities(),
             Self::KWin(adapter) => adapter.capabilities(),
+            Self::Gnome(adapter) => adapter.capabilities(),
             Self::Unsupported(_) => CompositorCapabilities::UNSUPPORTED,
         }
     }
@@ -456,6 +478,7 @@ impl CompositorBackend for WaylandBackend {
     async fn version(&self) -> Option<String> {
         match self {
             Self::Hyprland(adapter) => adapter.version().await,
+            Self::Gnome(adapter) => adapter.version().await,
             _ => None,
         }
     }
@@ -466,6 +489,7 @@ impl CompositorBackend for WaylandBackend {
             Self::Sway(adapter) => adapter.workspaces().await,
             Self::Niri(adapter) => adapter.workspaces().await,
             Self::KWin(adapter) => adapter.workspaces().await,
+            Self::Gnome(adapter) => adapter.workspaces().await,
             _ => Err(self.unsupported()),
         }
     }
@@ -475,6 +499,7 @@ impl CompositorBackend for WaylandBackend {
             Self::Sway(adapter) => adapter.windows().await,
             Self::Niri(adapter) => adapter.windows().await,
             Self::KWin(adapter) => adapter.windows().await,
+            Self::Gnome(adapter) => adapter.windows().await,
             _ => Err(self.unsupported()),
         }
     }
@@ -484,6 +509,7 @@ impl CompositorBackend for WaylandBackend {
             Self::Sway(adapter) => adapter.switch_workspace(id).await,
             Self::Niri(adapter) => adapter.switch_workspace(id).await,
             Self::KWin(adapter) => adapter.switch_workspace(id).await,
+            Self::Gnome(adapter) => adapter.switch_workspace(id).await,
             _ => Err(self.unsupported()),
         }
     }
@@ -493,6 +519,7 @@ impl CompositorBackend for WaylandBackend {
             Self::Sway(adapter) => adapter.focus_window(id).await,
             Self::Niri(adapter) => adapter.focus_window(id).await,
             Self::KWin(adapter) => adapter.focus_window(id).await,
+            Self::Gnome(adapter) => adapter.focus_window(id).await,
             _ => Err(self.unsupported()),
         }
     }
@@ -506,6 +533,7 @@ impl CompositorBackend for WaylandBackend {
             Self::Sway(adapter) => adapter.move_window(id, workspace_id).await,
             Self::Niri(adapter) => adapter.move_window(id, workspace_id).await,
             Self::KWin(adapter) => adapter.move_window(id, workspace_id).await,
+            Self::Gnome(adapter) => adapter.move_window(id, workspace_id).await,
             _ => Err(self.unsupported()),
         }
     }
@@ -515,6 +543,7 @@ impl CompositorBackend for WaylandBackend {
             Self::Sway(adapter) => adapter.toggle_floating(id).await,
             Self::Niri(adapter) => adapter.toggle_floating(id).await,
             Self::KWin(adapter) => adapter.toggle_floating(id).await,
+            Self::Gnome(adapter) => adapter.toggle_floating(id).await,
             _ => Err(self.unsupported()),
         }
     }
@@ -524,6 +553,7 @@ impl CompositorBackend for WaylandBackend {
             Self::Sway(adapter) => adapter.toggle_fullscreen(id).await,
             Self::Niri(adapter) => adapter.toggle_fullscreen(id).await,
             Self::KWin(adapter) => adapter.toggle_fullscreen(id).await,
+            Self::Gnome(adapter) => adapter.toggle_fullscreen(id).await,
             _ => Err(self.unsupported()),
         }
     }
@@ -533,6 +563,7 @@ impl CompositorBackend for WaylandBackend {
             Self::Sway(adapter) => adapter.close_window(id).await,
             Self::Niri(adapter) => adapter.close_window(id).await,
             Self::KWin(adapter) => adapter.close_window(id).await,
+            Self::Gnome(adapter) => adapter.close_window(id).await,
             _ => Err(self.unsupported()),
         }
     }
@@ -542,6 +573,7 @@ impl CompositorBackend for WaylandBackend {
             Self::Sway(adapter) => adapter.monitors().await,
             Self::Niri(adapter) => adapter.monitors().await,
             Self::KWin(adapter) => adapter.monitors().await,
+            Self::Gnome(adapter) => adapter.monitors().await,
             _ => Err(self.unsupported()),
         }
     }
@@ -551,6 +583,7 @@ impl CompositorBackend for WaylandBackend {
             Self::Sway(adapter) => adapter.set_monitor_power(name, enabled).await,
             Self::Niri(adapter) => adapter.set_monitor_power(name, enabled).await,
             Self::KWin(adapter) => adapter.set_monitor_power(name, enabled).await,
+            Self::Gnome(adapter) => adapter.set_monitor_power(name, enabled).await,
             _ => Err(self.unsupported()),
         }
     }
@@ -560,6 +593,7 @@ impl CompositorBackend for WaylandBackend {
             Self::Sway(adapter) => adapter.lock_screen().await,
             Self::Niri(adapter) => adapter.lock_screen().await,
             Self::KWin(adapter) => adapter.lock_screen().await,
+            Self::Gnome(adapter) => adapter.lock_screen().await,
             _ => Err(self.unsupported()),
         }
     }
@@ -569,9 +603,15 @@ impl CompositorBackend for WaylandBackend {
             Self::Sway(adapter) => adapter.event_stream().await,
             Self::Niri(adapter) => adapter.event_stream().await,
             Self::KWin(adapter) => adapter.event_stream().await,
+            Self::Gnome(adapter) => adapter.event_stream().await,
             _ => Err(self.unsupported()),
         }
     }
+}
+
+fn gnome_wayland_session(env: &[(String, String)]) -> bool {
+    env.iter()
+        .any(|(name, value)| name == "XDG_SESSION_TYPE" && value.eq_ignore_ascii_case("wayland"))
 }
 
 pub struct HostSystemControls;
@@ -2915,8 +2955,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn kwin_exposes_only_workspace_operations_and_gnome_remains_unsupported() {
+    #[tokio::test]
+    async fn kwin_exposes_only_workspace_operations_and_gnome_needs_an_enabled_bridge() {
         let kwin = WaylandBackend::for_kind(CompositorKind::KdeKWin);
         assert_eq!(kwin.info().id, "kde_kwin");
         assert!(kwin.capabilities().workspaces);
@@ -2928,6 +2968,26 @@ mod tests {
         let gnome = WaylandBackend::for_kind(CompositorKind::Gnome);
         assert_eq!(gnome.info().id, "gnome");
         assert_eq!(gnome.capabilities(), CompositorCapabilities::none());
+        assert!(
+            gnome
+                .workspaces()
+                .await
+                .unwrap_err()
+                .contains("bridge is unavailable")
+        );
+    }
+
+    #[test]
+    fn gnome_bridge_requires_a_wayland_session_type() {
+        assert!(gnome_wayland_session(&[(
+            "XDG_SESSION_TYPE".into(),
+            "wayland".into()
+        )]));
+        assert!(!gnome_wayland_session(&[(
+            "XDG_SESSION_TYPE".into(),
+            "x11".into()
+        )]));
+        assert!(!gnome_wayland_session(&[]));
     }
 
     #[test]

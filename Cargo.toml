@@ -6,6 +6,7 @@ members = [
     "crates/waycontrol-backend-sway",
     "crates/waycontrol-backend-niri",
     "crates/waycontrol-backend-kwin",
+    "crates/waycontrol-backend-gnome",
     "crates/waycontrol-core",
     "crates/waycontrol-protocol",
     "crates/waycontrol-hyprland",
