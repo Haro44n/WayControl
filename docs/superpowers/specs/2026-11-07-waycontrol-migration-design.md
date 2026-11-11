@@ -16,7 +16,7 @@ Rename WayControl to **WayControl** and evolve the existing Android companion an
 
 ## Non-goals for this migration stage
 
-- Claiming live-tested Sway or Niri support before exercising those adapters inside matching sessions; KWin workspace list/switch support is implemented but awaits live-session testing, while KWin window controls and GNOME compositor controls remain unsupported.
+- Treating isolated Sway/Niri CI compositor runs or KWin's virtual compositor check as proof of behavior in a user's own desktop session; a real Plasma session remains untested, and KWin window controls and GNOME compositor controls remain unsupported.
 - Replacing the existing HTTPS protocol, pairing flow, telemetry collectors, or Android design.
 - Adding arbitrary command execution, compositor shell passthrough, or privileged sudo configuration.
 
