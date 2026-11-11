@@ -61,3 +61,5 @@ A review of host command execution found that `Command::output()` captured stdou
 Report suspected vulnerabilities through the project maintainer. Do not expose a LAN-bound service on an untrusted network.
 
 A follow-up source review checked the HTTP body limit, pairing state transitions, bearer authentication and rate limits, event-stream bounds/revocation, Android certificate pinning, and pairing QR validation. It found no additional confirmed issue. This is source-level review; it does not replace independent review or hostile-network testing.
+
+The live loopback harness also sends an authenticated HTTP/1.1 request with both `Content-Length` and `Transfer-Encoding`, followed by a harmless pipelined ping. The server processes at most the first request and closes the connection. This matches [RFC 9112's framing rule](https://www.rfc-editor.org/rfc/rfc9112.html#section-6.3), which allows a server to use `Transfer-Encoding` but requires connection closure after responding. This controlled parser check is not a hostile-network penetration test.

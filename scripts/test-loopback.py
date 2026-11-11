@@ -265,6 +265,60 @@ def main():
             connection.close()
             assert oversized == 413, f"oversized message returned {oversized}"
 
+            # RFC 9112 allows a server to use Transfer-Encoding here, but requires
+            # the connection to close after responding to avoid request smuggling.
+            framing_body = json.dumps(
+                {"version": 1, "id": "framing-probe", "type": "ping"},
+                separators=(",", ":"),
+            ).encode()
+            chunked_body = f"{len(framing_body):x}\r\n".encode() + framing_body + b"\r\n0\r\n\r\n"
+            pipelined_body = json.dumps(
+                {"version": 1, "id": "pipelined-probe", "type": "ping"},
+                separators=(",", ":"),
+            ).encode()
+            pipelined_request = (
+                b"POST /api/v1/request HTTP/1.1\r\n"
+                b"Host: 127.0.0.1\r\n"
+                b"Content-Type: application/json\r\n"
+                + f"Authorization: Bearer {token}\r\n".encode()
+                + f"Content-Length: {len(pipelined_body)}\r\n\r\n".encode()
+                + pipelined_body
+            )
+            hostile_request = (
+                b"POST /api/v1/request HTTP/1.1\r\n"
+                b"Host: 127.0.0.1\r\n"
+                b"Content-Type: application/json\r\n"
+                + f"Authorization: Bearer {token}\r\n".encode()
+                + f"Content-Length: 0\r\nTransfer-Encoding: chunked\r\n".encode()
+                + b"\r\n"
+                + chunked_body
+                + pipelined_request
+            )
+            with socket.create_connection(("127.0.0.1", PORT), timeout=5) as raw:
+                with tls.wrap_socket(raw, server_hostname="127.0.0.1") as connection:
+                    connection.settimeout(5)
+                    connection.sendall(hostile_request)
+                    hostile_response = bytearray()
+                    peer_closed = False
+                    try:
+                        while len(hostile_response) <= 8192:
+                            chunk = connection.recv(4096)
+                            if not chunk:
+                                peer_closed = True
+                                break
+                            hostile_response.extend(chunk)
+                    except (ConnectionResetError, ssl.SSLError):
+                        peer_closed = True
+            assert len(hostile_response) <= 8192, "conflicting framing produced an oversized response"
+            assert peer_closed, "server kept the connection open after conflicting HTTP framing"
+            assert hostile_response.count(b"HTTP/1.1 ") == 1, (
+                "server processed a pipelined request after conflicting HTTP framing: "
+                + bytes(hostile_response[:512]).decode(errors="replace")
+            )
+            status, pong = api("ping", "after-framing-probe")
+            assert status == 200 and pong["success"], "daemon did not recover after conflicting HTTP framing"
+            print("PASS: conflicting HTTP framing closed the connection before processing the pipelined request")
+
             device_id = next(device["device_id"] for device in admin("devices")["devices"] if device["name"] == "Integration test device")
             revoked = subprocess.run([str(BINARY), "revoke", device_id], input="y\n", text=True, capture_output=True, env=env, timeout=5)
             assert revoked.returncode == 0, revoked.stderr + revoked.stdout
