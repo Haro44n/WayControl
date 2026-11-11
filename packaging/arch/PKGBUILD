@@ -5,7 +5,8 @@ pkgdesc='Authenticated Android companion daemon for Wayland desktops'
 arch=('x86_64')
 license=('GPL-3.0-or-later')
 depends=('glibc' 'gcc-libs' 'systemd' 'pipewire' 'playerctl' 'gtk3')
-optdepends=('nvidia-utils: NVIDIA GPU telemetry')
+optdepends=('nvidia-utils: NVIDIA GPU telemetry'
+            'gnome-shell: optional GNOME workspace and window bridge')
 makedepends=('cargo')
 options=('!debug' '!lto')
 
@@ -27,4 +28,7 @@ package() {
     install -Dm644 "$_project_root/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
     install -Dm644 "$_project_root/docs/INSTALL_ARCH.md" "$pkgdir/usr/share/doc/$pkgname/INSTALL_ARCH.md"
     install -Dm644 "$_project_root/SECURITY.md" "$pkgdir/usr/share/doc/$pkgname/SECURITY.md"
+    install -dm755 "$pkgdir/usr/share/waycontrol/gnome-shell-extension"
+    install -m644 "$_project_root/packaging/gnome/extension/metadata.json" "$pkgdir/usr/share/waycontrol/gnome-shell-extension/metadata.json"
+    install -m644 "$_project_root/packaging/gnome/extension/extension.js" "$pkgdir/usr/share/waycontrol/gnome-shell-extension/extension.js"
 }

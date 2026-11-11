@@ -32,7 +32,7 @@ systemctl --user enable --now waycontrol.service
 The user service runs without root, starts with the graphical session, and listens on loopback at `127.0.0.1:8765`. It uses `HYPRLAND_INSTANCE_SIGNATURE` when available. If that variable is not imported into the systemd user manager, it selects a compositor only when exactly one active Hyprland IPC socket pair exists; with multiple active instances it fails closed and asks for an explicit signature. To target a particular instance, import its signature into the user manager and restart the service:
 
 ```sh
-systemctl --user import-environment HYPRLAND_INSTANCE_SIGNATURE SWAYSOCK NIRI_SOCKET XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP
+systemctl --user import-environment HYPRLAND_INSTANCE_SIGNATURE SWAYSOCK NIRI_SOCKET XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE
 systemctl --user restart waycontrol.service
 ```
 
@@ -43,7 +43,25 @@ systemctl --user daemon-reload
 systemctl --user restart waycontrol.service
 ```
 
-The daemon detects Hyprland, Sway, Niri, KDE KWin, and GNOME from session variables and compositor socket variables. Hyprland workspace/window/monitor/event controls have live loopback coverage. GitHub Actions also exercises Sway in a headless compositor, Niri in a nested compositor, and KWin with its virtual compositor. These isolated checks cover workspace/window/output operations and event delivery, but do not replace validation in a user's Sway, Niri, or Plasma session. Sway monitor-power and lock-screen capabilities are unavailable; Niri fullscreen-state, per-monitor power, and lock-screen capabilities are unavailable. KWin window/monitor operations and all GNOME compositor controls remain unsupported. GNOME's XDG RemoteDesktop portal can mediate user-approved input, but WayControl does not currently use it; it does not provide workspace/window management. An optional GNOME Shell bridge is under design and will require explicit user installation and enablement. System telemetry, pairing, networking, audio/media, and power endpoints are independent of workspace/window support.
+The daemon detects Hyprland, Sway, Niri, KDE KWin, and GNOME from session variables and compositor socket variables. Hyprland workspace/window/monitor/event controls have live loopback coverage. GitHub Actions also exercises Sway in a headless compositor, Niri in a nested compositor, and KWin with its virtual compositor. These isolated checks cover workspace/window/output operations and event delivery, but do not replace validation in a user's Sway, Niri, or Plasma session. Sway monitor-power and lock-screen capabilities are unavailable; Niri fullscreen-state, per-monitor power, and lock-screen capabilities are unavailable. KWin window/monitor operations remain unsupported. GNOME Wayland sessions can use the optional GNOME Shell bridge for workspaces and windows; without the extension, or on GNOME X11, compositor capabilities stay unavailable. GNOME floating-state toggles, monitor power, and lock-screen actions are unsupported. GNOME's XDG RemoteDesktop portal can mediate user-approved input, but WayControl does not use it and it does not provide workspace/window management. System telemetry, pairing, networking, audio/media, and power endpoints are independent of workspace/window support.
+
+### Optional GNOME Shell bridge
+
+The package places extension files in `/usr/share/waycontrol/gnome-shell-extension`; the package does not install them into GNOME's enabled-extension list. The extension supports GNOME Shell 45 through 51. GJS ES modules are used from GNOME Shell 45 onward. Compatibility claims cover the declared API range; CI runs the nested Shell check on the distribution's available GNOME version, which does not replace testing on a user's session.
+
+Install the extension for your user and enable it manually:
+
+```sh
+extension_id=waycontrol@haro44n.github.io
+install -d "$HOME/.local/share/gnome-shell/extensions/$extension_id"
+install -m644 /usr/share/waycontrol/gnome-shell-extension/metadata.json "$HOME/.local/share/gnome-shell/extensions/$extension_id/metadata.json"
+install -m644 /usr/share/waycontrol/gnome-shell-extension/extension.js "$HOME/.local/share/gnome-shell/extensions/$extension_id/extension.js"
+gnome-extensions enable "$extension_id"
+```
+
+To disable the bridge, run `gnome-extensions disable waycontrol@haro44n.github.io`. The extension runs inside GNOME Shell with the user's session authority; only install and enable it if you want this local compositor integration. It exposes a fixed session-bus interface to the per-user WayControl daemon. The interface version is negotiated when the daemon starts, so restart `waycontrol.service` after enabling, disabling, or updating the extension. Changes to this GNOME integration do not enable or reconfigure KDE Connect, portals, Hyprland, Quickshell, or the system firewall.
+
+The interface is `org.waycontrol.GnomeShell1` at `/org/waycontrol/GnomeShell` on `org.waycontrol.GnomeShell`. Methods use fixed signatures: `GetVersion() → u`, `ListWorkspaces() → s`, `ListWindows() → s`, `SwitchWorkspace(s) → b`, `FocusWindow(s) → b`, `MoveWindow(s,s) → b`, `ToggleFullscreen(s) → b`, and `CloseWindow(s) → b`; `Changed(s)` emits only `workspace-changed` or `windows-changed`. Lists are JSON strings capped by the adapter at 256 KiB, 256 workspaces, and 128 windows; individual text values are bounded. IDs are opaque `gnome:<decimal>` values resolved against live Shell objects before each action. The window `floating` field is `null` because Mutter does not provide that state through this bridge. Window titles are desktop data and are returned only through the existing authenticated API.
 
 The address must be an IP address, not `0.0.0.0`, so the generated certificate can include it. Restrict access to the private network with your firewall. Installation does not edit firewall, Hyprland, Quickshell, KDE Connect, portal, or other desktop settings.
 

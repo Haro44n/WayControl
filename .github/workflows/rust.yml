@@ -34,6 +34,19 @@ jobs:
       - name: Exercise Sway adapter against a headless compositor
         run: dbus-run-session -- ./scripts/test-sway-headless.sh
 
+  gnome-live:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install nested GNOME Shell test dependencies
+        run: sudo apt-get update && sudo apt-get install -y dbus-daemon gnome-shell gjs libglib2.0-bin weston
+      - name: Report GNOME test runtime
+        run: gnome-shell --version && gjs --version
+      - name: Exercise the optional bridge in an isolated nested GNOME Shell
+        run: dbus-run-session -- ./scripts/test-gnome-nested.sh
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -45,6 +58,8 @@ jobs:
       - name: Install session bus for KWin adapter tests
         run: sudo apt-get update && sudo apt-get install -y dbus-daemon
       - run: cargo fmt --all -- --check
+      - run: node --check packaging/gnome/extension/extension.js
+      - run: python3 scripts/test-gnome-extension.py
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: dbus-run-session -- cargo test --workspace
       - run: cargo build --workspace --release

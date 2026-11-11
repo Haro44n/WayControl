@@ -1,0 +1,8 @@
+{
+  "uuid": "waycontrol@haro44n.github.io",
+  "name": "WayControl GNOME Bridge",
+  "description": "Provides an opt-in local D-Bus bridge for WayControl workspace and window controls.",
+  "shell-version": ["45", "46", "47", "48", "49", "50", "51"],
+  "version": 1,
+  "url": "https://github.com/Haro44n/WayControl"
+}

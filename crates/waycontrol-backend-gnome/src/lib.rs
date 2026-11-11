@@ -15,7 +15,7 @@ const INTERFACE: &str = "org.waycontrol.GnomeShell1";
 const INTERFACE_VERSION: u32 = 1;
 const MAX_JSON_BYTES: usize = 256 * 1024;
 const MAX_WORKSPACES: usize = 256;
-const MAX_WINDOWS: usize = 1024;
+const MAX_WINDOWS: usize = 128;
 const MAX_TEXT_BYTES: usize = 4096;
 
 #[derive(Clone, Debug)]
@@ -192,7 +192,7 @@ fn canonical_numeric_id(value: &str, prefix: &str, max_digits: usize) -> bool {
 }
 
 fn valid_workspace_id(value: &str) -> bool {
-    canonical_numeric_id(value, "gnome:", 4)
+    canonical_numeric_id(value, "gnome:", 20)
 }
 
 fn valid_window_id(value: &str) -> bool {

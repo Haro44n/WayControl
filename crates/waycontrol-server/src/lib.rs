@@ -403,9 +403,10 @@ impl WaylandBackend {
             if !gnome_wayland_session(&env) {
                 return Self::Unsupported(CompositorInfo::detected(kind));
             }
-            return match GnomeAdapter::connect().await {
-                Ok(adapter) => Self::Gnome(adapter),
-                Err(_) => Self::Unsupported(CompositorInfo::detected(kind)),
+            return match tokio::time::timeout(Duration::from_secs(2), GnomeAdapter::connect()).await
+            {
+                Ok(Ok(adapter)) => Self::Gnome(adapter),
+                Ok(Err(_)) | Err(_) => Self::Unsupported(CompositorInfo::detected(kind)),
             };
         }
         Self::for_detected_kind(kind, discovered_hyprland)
