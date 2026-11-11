@@ -48,6 +48,7 @@ assert "toggle_floating" not in source.lower()
 assert "gnome-shell-extension" in pkgbuild
 assert "extension.js" in pkgbuild and "metadata.json" in pkgbuild
 assert not re.search(r"gsettings\s+set|gnome-extensions\s+enable|systemctl.*enable", pkgbuild)
+assert nested_test.index("dbus-update-activation-environment --all") < nested_test.index("gsettings set org.gnome.shell enabled-extensions")
 assert nested_test.index("gsettings set org.gnome.shell enabled-extensions") < nested_test.index("gnome-shell --nested --wayland")
 assert "org.waycontrol.GnomeShell1.GetVersion" in nested_test
 print("GNOME extension contract and opt-in packaging checks passed")

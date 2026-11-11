@@ -34,6 +34,9 @@ extension_id=waycontrol@haro44n.github.io
 extension_dir="$XDG_DATA_HOME/gnome-shell/extensions/$extension_id"
 mkdir -p "$extension_dir"
 cp -a "$project_root/packaging/gnome/extension/." "$extension_dir/"
+# dbus-run-session starts before this script creates the isolated HOME. Ensure
+# activated settings services use the same temporary XDG paths as this client.
+dbus-update-activation-environment --all
 gsettings set org.gnome.shell disable-user-extensions false
 gsettings set org.gnome.shell enabled-extensions "['$extension_id']"
 enabled_extensions="$(gsettings get org.gnome.shell enabled-extensions)"
