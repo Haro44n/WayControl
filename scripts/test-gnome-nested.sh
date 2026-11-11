@@ -48,6 +48,24 @@ done
 
 gnome-shell --nested --wayland >"$tmp_root/gnome-shell.log" 2>&1 &
 shell_pid=$!
+shell_ready=0
+for _ in $(seq 1 60); do
+    if gdbus call --session \
+        --dest org.gnome.Shell \
+        --object-path /org/gnome/Shell \
+        --method org.freedesktop.DBus.Peer.Ping >/dev/null 2>&1; then
+        shell_ready=1
+        break
+    fi
+    kill -0 "$shell_pid" 2>/dev/null || break
+    sleep 1
+done
+if [[ "$shell_ready" != 1 ]]; then
+    cat "$tmp_root/gnome-shell.log"
+    echo "Nested GNOME Shell did not acquire its session D-Bus name" >&2
+    exit 1
+fi
+
 enabled=0
 for _ in $(seq 1 60); do
     if gnome-extensions enable "$extension_id" >"$tmp_root/gnome-extensions.log" 2>&1; then
