@@ -34,6 +34,13 @@ extension_id=waycontrol@haro44n.github.io
 extension_dir="$XDG_DATA_HOME/gnome-shell/extensions/$extension_id"
 mkdir -p "$extension_dir"
 cp -a "$project_root/packaging/gnome/extension/." "$extension_dir/"
+gsettings set org.gnome.shell disable-user-extensions false
+gsettings set org.gnome.shell enabled-extensions "['$extension_id']"
+enabled_extensions="$(gsettings get org.gnome.shell enabled-extensions)"
+[[ "$enabled_extensions" == *"'$extension_id'"* ]] || {
+    echo "GNOME did not persist the nested extension setting: $enabled_extensions" >&2
+    exit 1
+}
 
 export WAYLAND_DISPLAY=waycontrol-ci
 export XDG_SESSION_TYPE=wayland
@@ -48,38 +55,25 @@ done
 
 gnome-shell --nested --wayland >"$tmp_root/gnome-shell.log" 2>&1 &
 shell_pid=$!
-shell_ready=0
+bridge_ready=0
 for _ in $(seq 1 60); do
-    if gdbus call --session \
-        --dest org.gnome.Shell \
-        --object-path /org/gnome/Shell \
-        --method org.freedesktop.DBus.Peer.Ping >/dev/null 2>&1; then
-        shell_ready=1
+    version="$(gdbus call --session \
+        --dest org.waycontrol.GnomeShell \
+        --object-path /org/waycontrol/GnomeShell \
+        --method org.waycontrol.GnomeShell1.GetVersion 2>/dev/null || true)"
+    if [[ "$version" == *"uint32 1"* ]]; then
+        bridge_ready=1
         break
     fi
     kill -0 "$shell_pid" 2>/dev/null || break
     sleep 1
 done
-if [[ "$shell_ready" != 1 ]]; then
+if [[ "$bridge_ready" != 1 ]]; then
     cat "$tmp_root/gnome-shell.log"
-    echo "Nested GNOME Shell did not acquire its session D-Bus name" >&2
+    echo "GNOME Shell did not load the enabled WayControl extension; configured extensions: $enabled_extensions" >&2
     exit 1
 fi
 
-enabled=0
-for _ in $(seq 1 60); do
-    if gnome-extensions enable "$extension_id" >"$tmp_root/gnome-extensions.log" 2>&1; then
-        enabled=1
-        break
-    fi
-    kill -0 "$shell_pid" 2>/dev/null || break
-    sleep 1
-done
-if [[ "$enabled" != 1 ]]; then
-    cat "$tmp_root/gnome-extensions.log"
-    cat "$tmp_root/gnome-shell.log"
-    exit 1
-fi
 if ! cargo run --locked --manifest-path "$project_root/Cargo.toml" -p waycontrol-backend-gnome --example gnome-smoke; then
     cat "$tmp_root/gnome-shell.log"
     exit 1
