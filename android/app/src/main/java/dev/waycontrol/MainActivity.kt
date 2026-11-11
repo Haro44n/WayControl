@@ -600,52 +600,83 @@ private fun HomeQuickActions(
 
 @Composable private fun WindowScreen(items: JSONArray, workspaces: JSONArray, monitors: JSONArray, status: String, capabilities: CompositorCapabilities, action: (String, String, JSONObject) -> Unit) {
     Header("Windows", status)
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var groupingName by rememberSaveable { mutableStateOf(WindowGrouping.WORKSPACE.name) }
+    val grouping = if (groupingName == WindowGrouping.MONITOR.name) WindowGrouping.MONITOR else WindowGrouping.WORKSPACE
+    var groupingMenuOpen by remember { mutableStateOf(false) }
+    OutlinedTextField(
+        value = searchQuery,
+        onValueChange = { searchQuery = it },
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text("Search windows") },
+        placeholder = { Text("Title, application, workspace, monitor") },
+        singleLine = true,
+    )
+    Box {
+        Button(onClick = { groupingMenuOpen = true }) {
+            Text("Group by ${if (grouping == WindowGrouping.WORKSPACE) "workspace" else "monitor"}")
+        }
+        DropdownMenu(expanded = groupingMenuOpen, onDismissRequest = { groupingMenuOpen = false }) {
+            DropdownMenuItem(
+                text = { Text("Workspace") },
+                onClick = { groupingName = WindowGrouping.WORKSPACE.name; groupingMenuOpen = false },
+            )
+            DropdownMenuItem(
+                text = { Text("Monitor") },
+                onClick = { groupingName = WindowGrouping.MONITOR.name; groupingMenuOpen = false },
+            )
+        }
+    }
+    val groups = groupFilteredWindows(items, workspaces, searchQuery, grouping)
     if (items.length() == 0) Empty("No open windows", status)
+    else if (groups.isEmpty()) Empty("No matching windows", status)
     var closeTarget by remember { mutableStateOf<String?>(null) }
-    for (i in 0 until items.length()) {
-        val item = items.optJSONObject(i) ?: continue
-        val address = item.optString("address")
-        var menuOpen by remember(address) { mutableStateOf(false) }
-        var monitorMenuOpen by remember(address) { mutableStateOf(false) }
-        Card {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(item.optString("title", "Untitled window"), color = MainText, fontWeight = FontWeight.Medium)
-                val monitorName = item.optString("monitor").takeIf { it.isNotBlank() && it != "null" } ?: "—"
-                Text("${item.optString("app_id", "Unknown app")} · workspace ${item.optString("workspace_id", "—")} · $monitorName", color = SecondaryText)
-                if (item.optBoolean("focused")) Text("FOCUSED", color = Color(0xFFB9567B), style = MaterialTheme.typography.labelSmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (capabilities.focusWindow) Button(onClick = { action("window.focus", address, JSONObject()) }) { Text("Focus") }
-                    if (capabilities.toggleFloating) Button(onClick = { action("window.toggle_floating", address, JSONObject()) }) { Text(if (item.optBoolean("floating")) "Tile" else "Float") }
-                    if (capabilities.toggleFullscreen) Button(onClick = { action("window.toggle_fullscreen", address, JSONObject()) }) { Text(if (item.optBoolean("fullscreen")) "Exit full screen" else "Full screen") }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (capabilities.togglePinned && item.optBoolean("floating") && item.has("pinned") && !item.isNull("pinned")) Button(onClick = { action("window.toggle_pinned", address, JSONObject()) }) { Text(if (item.optBoolean("pinned")) "Unpin" else "Pin") }
-                    if (capabilities.centerFloatingWindow && item.optBoolean("floating")) Button(onClick = { action("window.center_floating", address, JSONObject()) }) { Text("Center") }
-                    if (capabilities.moveWindow && capabilities.workspaces) Button(onClick = { menuOpen = true }) { Text("Move to workspace") }
-                    androidx.compose.material3.DropdownMenu(expanded = menuOpen && capabilities.moveWindow && capabilities.workspaces, onDismissRequest = { menuOpen = false }) {
-                        for (w in 0 until workspaces.length()) {
-                            val workspace = workspaces.optJSONObject(w) ?: continue
-                            val id = workspace.optString("id")
-                            androidx.compose.material3.DropdownMenuItem(
-                                text = { Text(workspace.optString("name", id.toString())) },
-                                onClick = { menuOpen = false; action("window.move", address, JSONObject().put("workspace_id", id)) }
-                            )
+    for (group in groups) {
+        Text(group.label, color = SecondaryText, style = MaterialTheme.typography.titleSmall)
+        for (item in group.windows) {
+            val address = item.optString("address")
+            var menuOpen by remember(address) { mutableStateOf(false) }
+            var monitorMenuOpen by remember(address) { mutableStateOf(false) }
+            Card {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(item.optString("title", "Untitled window"), color = MainText, fontWeight = FontWeight.Medium)
+                    val monitorName = item.optString("monitor").takeIf { it.isNotBlank() && it != "null" } ?: "—"
+                    Text("${item.optString("app_id", "Unknown app")} · workspace ${item.optString("workspace_id", "—")} · $monitorName", color = SecondaryText)
+                    if (item.optBoolean("focused")) Text("FOCUSED", color = Color(0xFFB9567B), style = MaterialTheme.typography.labelSmall)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (capabilities.focusWindow) Button(onClick = { action("window.focus", address, JSONObject()) }) { Text("Focus") }
+                        if (capabilities.toggleFloating) Button(onClick = { action("window.toggle_floating", address, JSONObject()) }) { Text(if (item.optBoolean("floating")) "Tile" else "Float") }
+                        if (capabilities.toggleFullscreen) Button(onClick = { action("window.toggle_fullscreen", address, JSONObject()) }) { Text(if (item.optBoolean("fullscreen")) "Exit full screen" else "Full screen") }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (capabilities.togglePinned && item.optBoolean("floating") && item.has("pinned") && !item.isNull("pinned")) Button(onClick = { action("window.toggle_pinned", address, JSONObject()) }) { Text(if (item.optBoolean("pinned")) "Unpin" else "Pin") }
+                        if (capabilities.centerFloatingWindow && item.optBoolean("floating")) Button(onClick = { action("window.center_floating", address, JSONObject()) }) { Text("Center") }
+                        if (capabilities.moveWindow && capabilities.workspaces) Button(onClick = { menuOpen = true }) { Text("Move to workspace") }
+                        DropdownMenu(expanded = menuOpen && capabilities.moveWindow && capabilities.workspaces, onDismissRequest = { menuOpen = false }) {
+                            for (w in 0 until workspaces.length()) {
+                                val workspace = workspaces.optJSONObject(w) ?: continue
+                                val id = workspace.optString("id")
+                                DropdownMenuItem(
+                                    text = { Text(workspace.optString("name", id)) },
+                                    onClick = { menuOpen = false; action("window.move", address, JSONObject().put("workspace_id", id)) },
+                                )
+                            }
                         }
                     }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (capabilities.moveWindowToMonitor && capabilities.monitors) Button(onClick = { monitorMenuOpen = true }) { Text("Move to monitor") }
-                    androidx.compose.material3.DropdownMenu(expanded = monitorMenuOpen && capabilities.moveWindowToMonitor && capabilities.monitors, onDismissRequest = { monitorMenuOpen = false }) {
-                        for (m in 0 until monitors.length()) {
-                            val monitor = monitors.optJSONObject(m) ?: continue
-                            val name = monitor.optString("name").takeIf { it.isNotBlank() } ?: continue
-                            androidx.compose.material3.DropdownMenuItem(
-                                text = { Text(name) },
-                                onClick = { monitorMenuOpen = false; action("window.move_monitor", address, JSONObject().put("monitor", name)) }
-                            )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (capabilities.moveWindowToMonitor && capabilities.monitors) Button(onClick = { monitorMenuOpen = true }) { Text("Move to monitor") }
+                        DropdownMenu(expanded = monitorMenuOpen && capabilities.moveWindowToMonitor && capabilities.monitors, onDismissRequest = { monitorMenuOpen = false }) {
+                            for (m in 0 until monitors.length()) {
+                                val monitor = monitors.optJSONObject(m) ?: continue
+                                val name = monitor.optString("name").takeIf { it.isNotBlank() } ?: continue
+                                DropdownMenuItem(
+                                    text = { Text(name) },
+                                    onClick = { monitorMenuOpen = false; action("window.move_monitor", address, JSONObject().put("monitor", name)) },
+                                )
+                            }
                         }
+                        if (capabilities.closeWindow) Button(onClick = { closeTarget = address }) { Text("Close") }
                     }
-                    if (capabilities.closeWindow) Button(onClick = { closeTarget = address }) { Text("Close") }
                 }
             }
         }
