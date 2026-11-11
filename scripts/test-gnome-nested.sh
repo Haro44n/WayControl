@@ -10,6 +10,16 @@ cleanup() {
     if [[ -n "${shell_pid:-}" ]]; then kill "$shell_pid" 2>/dev/null || true; fi
     if [[ -n "${weston_pid:-}" ]]; then kill "$weston_pid" 2>/dev/null || true; fi
     if [[ -n "${xvfb_pid:-}" ]]; then kill "$xvfb_pid" 2>/dev/null || true; fi
+    document_mount="$tmp_root/runtime/doc/by-app"
+    if [[ -d "$document_mount" ]]; then
+        if command -v fusermount3 >/dev/null 2>&1; then
+            fusermount3 -u "$document_mount" 2>/dev/null || true
+        elif command -v fusermount >/dev/null 2>&1; then
+            fusermount -u "$document_mount" 2>/dev/null || true
+        else
+            umount -l "$document_mount" 2>/dev/null || true
+        fi
+    fi
     rm -rf "$tmp_root"
 }
 trap cleanup EXIT

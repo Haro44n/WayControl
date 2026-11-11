@@ -53,4 +53,5 @@ assert not re.search(r"gsettings\s+set|gnome-extensions\s+enable|systemctl.*enab
 assert nested_test.index("dbus-update-activation-environment --all") < nested_test.index("gsettings set org.gnome.shell enabled-extensions")
 assert nested_test.index("gsettings set org.gnome.shell enabled-extensions") < nested_test.index("gnome-shell --nested --wayland")
 assert "org.waycontrol.GnomeShell1.GetVersion" in nested_test
+assert "fusermount3 -u" in nested_test
 print("GNOME extension contract and opt-in packaging checks passed")

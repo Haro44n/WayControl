@@ -41,7 +41,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install nested GNOME Shell test dependencies
-        run: sudo apt-get update && sudo apt-get install -y dbus-daemon gnome-shell gjs libglib2.0-bin weston xvfb
+        run: sudo apt-get update && sudo apt-get install -y dbus-daemon fuse3 gnome-shell gjs libglib2.0-bin weston xvfb
       - name: Report GNOME test runtime
         run: gnome-shell --version && gjs --version
       - name: Exercise the optional bridge in an isolated nested GNOME Shell
