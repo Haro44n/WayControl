@@ -1,6 +1,6 @@
 # WayControl progress
 
-- Hyprland pinning checkpoint (2026-11-11): added nullable pinned-state reporting, the typed `window.toggle_pinned` operation, Hyprland-only capability negotiation, floating-window validation, Android Pin/Unpin controls, and documentation. `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` passed. Android unit tests could not run locally because no Android SDK is installed/configured; the pushed CI run will provide that check. Tiled windows are rejected before dispatcher execution.
+- Hyprland pinning checkpoint (2026-11-11): added nullable pinned-state reporting, the typed `window.toggle_pinned` operation, Hyprland-only capability negotiation, floating-window validation, Android Pin/Unpin controls, and documentation. `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` passed. GitHub Actions run [43089778778](https://github.com/Haro44n/WayControl/actions/runs/43089778778) passed Rust, Sway/Niri/KWin live, nested GNOME, Android unit/lint/APK, and Android 16 instrumentation jobs. Tiled windows are rejected before dispatcher execution.
 
 **Your desktop. Your control.**
 
