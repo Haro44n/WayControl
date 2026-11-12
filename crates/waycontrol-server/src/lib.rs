@@ -3374,6 +3374,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pairing_route_allows_live_code_after_invalid_attempts_are_rate_limited() {
+        let (state, path) = test_state().await;
+        let info = state.pairing_info().await.unwrap();
+        let mut wrong_code = info.code.clone().into_bytes();
+        wrong_code[0] = if wrong_code[0] == b'0' { b'1' } else { b'0' };
+        let wrong_code = String::from_utf8(wrong_code).unwrap();
+        let app = router(state);
+
+        for _ in 0..PAIRING_ATTEMPT_LIMIT {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::post("/api/v1/pair")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(format!(
+                            r#"{{"code":"{wrong_code}","device_name":"phone"}}"#
+                        )))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/pair")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"code":"{wrong_code}","device_name":"phone"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        let response = app
+            .oneshot(
+                Request::post("/api/v1/pair")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"code":"{}","device_name":"phone"}}"#,
+                        info.code
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[tokio::test]
     async fn approved_pairing_credentials_are_marked_non_cacheable() {
         let (state, path) = test_state().await;
         let info = state.pairing_info().await.unwrap();
