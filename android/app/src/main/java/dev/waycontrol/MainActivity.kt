@@ -53,6 +53,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -154,6 +155,7 @@ internal fun WayControlApp(store: SecureConnectionStore) {
     val capabilities = remember(snapshot.desktop) { CompositorCapabilities.fromDesktop(snapshot.desktop) }
     val destinations = remember(capabilities) { visibleDestinations(capabilities) }
     val artworkTarget = remember(snapshot.media) { mediaArtworkTarget(snapshot.media) }
+    val currentDestination by rememberUpdatedState(selected)
 
     fun markWelcomeCompleted() {
         firstRunPreferences.edit().putBoolean("welcome_completed", true).apply()
@@ -238,17 +240,13 @@ internal fun WayControlApp(store: SecureConnectionStore) {
                         workspaces = if (fetch.workspaces) client.request("workspace.list").optJSONArray("items") ?: JSONArray() else JSONArray(),
                         windows = if (fetch.windows) client.request("window.list").optJSONArray("items") ?: JSONArray() else JSONArray(),
                         monitors = if (fetch.monitors) client.request("monitor.list").optJSONArray("items") ?: JSONArray() else JSONArray(),
-                        audio = runCatching { client.request("audio.info").put("available", true) }
-                            .getOrElse { JSONObject().put("available", false) },
-                        media = runCatching { client.request("media.info").put("available", true) }
-                            .getOrElse { JSONObject().put("available", false) },
                         networkLatencyMs = networkLatencyMs,
                     )
                 }
                 if (selected == Destination.System) {
                     telemetryHistory = telemetryHistory.append(telemetrySample(updated.desktop))
                 }
-                snapshot = updated
+                snapshot = updated.copy(audio = snapshot.audio, media = snapshot.media)
                 status = "Connected"; error = null
                 true
             } catch (e: CancellationException) {
@@ -276,6 +274,42 @@ internal fun WayControlApp(store: SecureConnectionStore) {
         }
         if (lifecycle == null) maintainConnection()
         else lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { maintainConnection() }
+    }
+    LaunchedEffect(token, endpoint, pin) {
+        val savedToken = token ?: return@LaunchedEffect
+        if (endpoint.isBlank() || pin.isBlank()) return@LaunchedEffect
+
+        suspend fun refreshSystemControls() {
+            suspend fun requestState(client: WayControlClient, operation: String): JSONObject = try {
+                client.request(operation).put("available", true)
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (_: Exception) {
+                JSONObject().put("available", false)
+            }
+
+            val (audio, media) = try {
+                withContext(Dispatchers.IO) {
+                    val client = WayControlClient(endpoint, pin, savedToken)
+                    requestState(client, "audio.info") to requestState(client, "media.info")
+                }
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (_: Exception) {
+                JSONObject().put("available", false) to JSONObject().put("available", false)
+            }
+            snapshot = snapshot.copy(audio = audio, media = media)
+        }
+
+        suspend fun maintainSystemControls() {
+            while (true) {
+                if (shouldRefreshSystemControls(currentDestination)) refreshSystemControls()
+                delay(SYSTEM_CONTROLS_REFRESH_INTERVAL_MILLIS)
+            }
+        }
+
+        if (lifecycle == null) maintainSystemControls()
+        else lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { maintainSystemControls() }
     }
     LaunchedEffect(selected, artworkTarget, token, endpoint, pin) {
         val (playerId, artworkId) = artworkTarget ?: run { mediaArtwork = null; return@LaunchedEffect }
