@@ -35,10 +35,10 @@ Security checks exercised in the current Rust test and loopback runs include exp
 
 ## Audit limits and deployment notes
 
-- `cargo audit` scanned 207 locked Rust crate dependencies. It found no vulnerability advisories; it reported three informational unmaintained-crate advisories for `zvariant`, `zvariant_derive`, and `zbus_names` from the current zbus 5 dependency graph. These crates have been folded into zbus 6, but zbus 6 requires Rust 1.89 while this project currently declares Rust 1.85, so the major migration is deferred and the warnings remain recorded.
-- `gitleaks git . --redact=100` scanned 19 commits and found no leaks.
+- On 2026-11-12, `cargo-audit` 0.23.0 loaded 1,471 RustSec advisories and scanned 208 locked Rust crate dependencies. It found no vulnerability advisories. It reported three unmaintained-crate advisories: [`RUSTSEC-2026-0370`](https://rustsec.org/advisories/RUSTSEC-2026-0370) (`zvariant`), [`RUSTSEC-2026-0371`](https://rustsec.org/advisories/RUSTSEC-2026-0371) (`zbus_names`), and [`RUSTSEC-2026-0372`](https://rustsec.org/advisories/RUSTSEC-2026-0372) (`zvariant_derive`). No fixed upgrade is currently available in the zbus 5 graph; zbus 6 requires Rust 1.89 while this project declares Rust 1.85, so the major migration is deferred.
+- On 2026-11-12, `gitleaks` 8.30.1 scanned 144 Git commits (about 964 KB) with redacted reporting and found no leaks.
 - A 45-second libFuzzer run exercised the 64 KiB-bounded JSON `RequestEnvelope` parser and typed validator for 4.1 million executions without a crash. This is not a hostile-network penetration test. The TLS pairing/reconnect path was exercised on an Android emulator, not across a hostile network or multiple physical Android vendors.
-- `systemd-analyze verify systemd/waycontrol.service` parsed the unit but reported its configured `%h/.local/bin/waycontrold` executable is absent because the service has not been installed. The service itself was not started under systemd.
+- The standalone `systemd/waycontrol.service` expects `%h/.local/bin/waycontrold`, which is not installed. The Arch package unit at `packaging/arch/waycontrol.service` passed staged `systemd-analyze verify`, and the packaged daemon passed a transient user-service integration check; the Arch package remains uninstalled and the persistent service is not enabled.
 - LAN binding is opt-in and must be paired with host firewall rules for a trusted network. The project does not configure firewall policy.
 - `PROGRESS.md` records the complete test evidence, measured runtime data, and product work that remains before v0.1 acceptance.
 
