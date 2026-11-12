@@ -2990,7 +2990,7 @@ mod tests {
         assert_eq!(backend.info().name, "Sway");
         assert!(backend.capabilities().workspaces);
         assert!(backend.capabilities().windows);
-        assert!(!backend.capabilities().monitor_power);
+        assert!(backend.capabilities().monitor_power);
         assert!(!backend.capabilities().lock_screen);
         assert!(
             backend

@@ -70,4 +70,4 @@ if [[ "$ready" != true ]]; then
 fi
 swaymsg exec 'xterm -title WayControlLiveTest -e sh -c "sleep 300"'
 WAYCONTROL_TEST_LIVE_SWAY=1 cargo test -p waycontrol-backend-sway \
-    live_sway_supports_workspace_window_monitor_and_event_operations -- --ignored --nocapture
+    live_sway_supports_workspace_window_monitor_power_and_event_operations -- --ignored --nocapture

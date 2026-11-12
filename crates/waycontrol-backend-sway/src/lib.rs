@@ -143,7 +143,7 @@ impl SwayAdapter {
 
     fn quote(value: &str) -> Result<String, String> {
         if value.is_empty() || value.len() > 128 || value.chars().any(char::is_control) {
-            return Err("invalid Sway workspace name".into());
+            return Err("invalid Sway name".into());
         }
         Ok(format!(
             "\"{}\"",
@@ -313,7 +313,7 @@ impl CompositorBackend for SwayAdapter {
             center_floating_window: false,
             close_window: true,
             monitors: true,
-            monitor_power: false,
+            monitor_power: true,
             events: true,
             lock_screen: false,
         }
@@ -363,14 +363,19 @@ impl CompositorBackend for SwayAdapter {
                     .filter_map(|output| {
                         Some(Monitor {
                             name: output.get("name")?.as_str()?.to_owned(),
-                            dpms_enabled: None,
+                            dpms_enabled: output
+                                .get("power")
+                                .and_then(Value::as_bool)
+                                .or_else(|| output.get("dpms").and_then(Value::as_bool)),
                         })
                     })
                     .collect()
             })
     }
-    async fn set_monitor_power(&self, _name: &str, _enabled: bool) -> Result<(), String> {
-        Err("Sway monitor power control is not supported by this adapter".into())
+    async fn set_monitor_power(&self, name: &str, enabled: bool) -> Result<(), String> {
+        let power = if enabled { "on" } else { "off" };
+        self.command(format!("output {} power {power}", Self::quote(name)?))
+            .await
     }
     async fn lock_screen(&self) -> Result<(), String> {
         Err("Sway lock screen is not supported by this adapter".into())
@@ -413,7 +418,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires a live Sway compositor and WAYCONTROL_TEST_LIVE_SWAY=1"]
-    async fn live_sway_supports_workspace_window_monitor_and_event_operations() {
+    async fn live_sway_supports_workspace_window_monitor_power_and_event_operations() {
         assert_eq!(
             std::env::var("WAYCONTROL_TEST_LIVE_SWAY").as_deref(),
             Ok("1"),
@@ -424,6 +429,39 @@ mod tests {
         assert!(
             !monitors.is_empty(),
             "headless Sway should expose an output"
+        );
+        let output_name = monitors[0].name.clone();
+        assert_eq!(monitors[0].dpms_enabled, Some(true));
+        assert!(adapter.capabilities().monitor_power);
+        adapter
+            .set_monitor_power(&output_name, false)
+            .await
+            .expect("turn off the isolated headless output");
+        assert_eq!(
+            adapter
+                .monitors()
+                .await
+                .unwrap()
+                .iter()
+                .find(|monitor| monitor.name == output_name)
+                .unwrap()
+                .dpms_enabled,
+            Some(false)
+        );
+        adapter
+            .set_monitor_power(&output_name, true)
+            .await
+            .expect("restore the isolated headless output");
+        assert_eq!(
+            adapter
+                .monitors()
+                .await
+                .unwrap()
+                .iter()
+                .find(|monitor| monitor.name == output_name)
+                .unwrap()
+                .dpms_enabled,
+            Some(true)
         );
         let workspaces = adapter.workspaces().await.expect("query workspaces");
         let original = workspaces
@@ -613,6 +651,60 @@ mod tests {
         assert!(workspaces[0].active);
         peer.await.unwrap();
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn output_query_reports_sway_power_state_and_legacy_dpms_state() {
+        let (path, listener) = mock_socket().await;
+        let peer = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (kind, _) = receive_request(&mut stream).await;
+            assert_eq!(kind, GET_OUTPUTS);
+            reply(
+                &mut stream,
+                GET_OUTPUTS,
+                br#"[{"name":"DP-1","power":true},{"name":"DP-2","dpms":false},{"name":"DP-3"}]"#,
+            )
+            .await;
+        });
+        let adapter = SwayAdapter {
+            socket: Some(path.clone()),
+        };
+
+        let monitors = adapter.monitors().await.unwrap();
+
+        assert_eq!(monitors[0].name, "DP-1");
+        assert_eq!(monitors[0].dpms_enabled, Some(true));
+        assert_eq!(monitors[1].name, "DP-2");
+        assert_eq!(monitors[1].dpms_enabled, Some(false));
+        assert_eq!(monitors[2].dpms_enabled, None);
+        peer.await.unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn monitor_power_uses_a_quoted_output_name_and_explicit_dpms_state() {
+        let (path, listener) = mock_socket().await;
+        let peer = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (kind, payload) = receive_request(&mut stream).await;
+            assert_eq!(kind, RUN_COMMAND);
+            assert_eq!(payload, br#"output "DP-1" power off"#);
+            reply(&mut stream, RUN_COMMAND, br#"[{"success":true}]"#).await;
+        });
+        let adapter = SwayAdapter {
+            socket: Some(path.clone()),
+        };
+
+        adapter.set_monitor_power("DP-1", false).await.unwrap();
+
+        peer.await.unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn sway_advertises_monitor_power_control() {
+        assert!(SwayAdapter { socket: None }.capabilities().monitor_power);
     }
 
     #[tokio::test]
