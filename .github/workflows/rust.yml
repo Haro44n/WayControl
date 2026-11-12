@@ -107,7 +107,8 @@ jobs:
           disable-animations: true
           script: |
             ./gradlew connectedDebugAndroidTest
-            adb uninstall dev.waycontrol
+            adb shell am force-stop dev.waycontrol
+            adb shell pm uninstall --user 0 dev.waycontrol
             adb install app/build/outputs/apk/release/app-release.apk
             adb shell monkey -p dev.waycontrol -c android.intent.category.LAUNCHER 1
             launched=0
