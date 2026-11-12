@@ -224,9 +224,9 @@ internal fun WayControlApp(store: SecureConnectionStore) {
     }
     LaunchedEffect(token, endpoint, pin, eventCounter, selected, refreshInterval) {
         if (token == null || endpoint.isBlank() || pin.isBlank()) return@LaunchedEffect
-        suspend fun refresh() {
+        suspend fun refresh(): Boolean {
             loading = true
-            try {
+            val connected = try {
                 val updated = withContext(Dispatchers.IO) {
                     val client = WayControlClient(endpoint, pin, token)
                     val desktopStartedAt = System.nanoTime()
@@ -250,6 +250,7 @@ internal fun WayControlApp(store: SecureConnectionStore) {
                 }
                 snapshot = updated
                 status = "Connected"; error = null
+                true
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -257,14 +258,24 @@ internal fun WayControlApp(store: SecureConnectionStore) {
                 telemetryHistory = TelemetryHistory()
                 status = "Disconnected"
                 error = e.message ?: "Connection failed"
+                false
             }
             loading = false
+            return connected
         }
-        if (lifecycle == null) {
-            while (true) { refresh(); delay(refreshInterval.delayMillis(selected)) }
-        } else lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            while (true) { refresh(); delay(refreshInterval.delayMillis(selected)) }
+        val backoff = ReconnectBackoff()
+        suspend fun maintainConnection() {
+            while (true) {
+                if (refresh()) {
+                    backoff.reset()
+                    delay(refreshInterval.delayMillis(selected))
+                } else {
+                    delay(backoff.nextDelayMillis())
+                }
+            }
         }
+        if (lifecycle == null) maintainConnection()
+        else lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { maintainConnection() }
     }
     LaunchedEffect(selected, artworkTarget, token, endpoint, pin) {
         val (playerId, artworkId) = artworkTarget ?: run { mediaArtwork = null; return@LaunchedEffect }
@@ -286,25 +297,31 @@ internal fun WayControlApp(store: SecureConnectionStore) {
     LaunchedEffect(token, endpoint, pin, capabilities.events) {
         val savedToken = token ?: return@LaunchedEffect
         if (endpoint.isBlank() || pin.isBlank() || !capabilities.events) return@LaunchedEffect
+        val backoff = ReconnectBackoff()
         suspend fun subscribe() {
             val parentContext = currentCoroutineContext()
             withContext(Dispatchers.IO) {
-                WayControlClient(endpoint, pin, savedToken).readEvents({ !parentContext.isActive }) {
-                    scope.launch { eventCounter = (eventCounter + 1) % 100_000 }
+                WayControlClient(endpoint, pin, savedToken).readEvents(
+                    shouldStop = { !parentContext.isActive },
+                    onConnected = { backoff.reset() },
+                    onEvent = { scope.launch { eventCounter = (eventCounter + 1) % 100_000 } },
+                )
+            }
+        }
+        suspend fun maintainEventSubscription() {
+            while (true) {
+                try {
+                    subscribe()
+                } catch (exception: CancellationException) {
+                    throw exception
+                } catch (_: Exception) {
+                    // Retry below with a bounded delay while preserving cancellation.
                 }
+                delay(backoff.nextDelayMillis())
             }
         }
-        if (lifecycle == null) {
-            while (true) {
-                runCatching { subscribe() }
-                delay(1000)
-            }
-        } else lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            while (true) {
-                runCatching { subscribe() }
-                delay(1000)
-            }
-        }
+        if (lifecycle == null) maintainEventSubscription()
+        else lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { maintainEventSubscription() }
     }
 
     MaterialTheme(colorScheme = darkColorScheme(

@@ -77,7 +77,11 @@ class WayControlClient(baseUrl: String, fingerprint: String, private val token: 
 
     fun pairingStatus(requestId: String): JSONObject = call("GET", "/api/v1/pair/$requestId", null)
 
-    fun readEvents(shouldStop: () -> Boolean, onEvent: (String) -> Unit) {
+    fun readEvents(
+        shouldStop: () -> Boolean,
+        onConnected: () -> Unit,
+        onEvent: (String) -> Unit,
+    ) {
         check(token != null) { "Pairing approval is required" }
         val connection = (URL(base + "/api/v1/events").openConnection() as HttpsURLConnection).apply {
             sslSocketFactory = tls.socketFactory
@@ -90,6 +94,7 @@ class WayControlClient(baseUrl: String, fingerprint: String, private val token: 
         }
         try {
             if (connection.responseCode != 200) error("Event subscription failed: HTTP ${connection.responseCode}")
+            onConnected()
             connection.inputStream.bufferedReader().use { reader ->
                 val data = StringBuilder()
                 while (!shouldStop()) {
