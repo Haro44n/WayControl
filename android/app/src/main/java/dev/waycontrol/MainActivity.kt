@@ -112,11 +112,14 @@ internal fun visibleDestinations(capabilities: CompositorCapabilities): List<Des
 }
 
 @Composable
-private fun WayControlApp(store: SecureConnectionStore) {
+internal fun WayControlApp(store: SecureConnectionStore) {
     val context = LocalContext.current
     val lifecycle = (context as? LifecycleOwner)?.lifecycle
     val telemetryPreferences = remember(context) {
         context.getSharedPreferences("telemetry_settings", android.content.Context.MODE_PRIVATE)
+    }
+    val firstRunPreferences = remember(context) {
+        context.getSharedPreferences("first_run", android.content.Context.MODE_PRIVATE)
     }
     var refreshInterval by remember(context) {
         mutableStateOf(
@@ -126,6 +129,7 @@ private fun WayControlApp(store: SecureConnectionStore) {
         )
     }
     var selected by rememberSaveable { mutableStateOf(Destination.Home) }
+    var showWelcome by rememberSaveable { mutableStateOf<Boolean?>(null) }
     var endpoint by rememberSaveable { mutableStateOf("") }
     var pin by rememberSaveable { mutableStateOf("") }
     var code by rememberSaveable { mutableStateOf("") }
@@ -145,10 +149,36 @@ private fun WayControlApp(store: SecureConnectionStore) {
     var discoveryStatus by remember { mutableStateOf<String?>(null) }
     var discovering by remember { mutableStateOf(false) }
     var scanningQr by remember { mutableStateOf(false) }
+    val contentScrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
     val capabilities = remember(snapshot.desktop) { CompositorCapabilities.fromDesktop(snapshot.desktop) }
     val destinations = remember(capabilities) { visibleDestinations(capabilities) }
     val artworkTarget = remember(snapshot.media) { mediaArtworkTarget(snapshot.media) }
+
+    fun markWelcomeCompleted() {
+        firstRunPreferences.edit().putBoolean("welcome_completed", true).apply()
+        showWelcome = false
+    }
+
+    fun startDiscovery() {
+        if (discovering) return
+        discovering = true
+        discoveryStatus = null
+        scope.launch {
+            try {
+                discoveredServers = LanDiscovery.discover()
+                discoveryStatus = if (discoveredServers.isEmpty()) {
+                    "No WayControl servers found on this network"
+                } else {
+                    "Found ${discoveredServers.size} server(s)"
+                }
+            } catch (exception: Exception) {
+                discoveryStatus = exception.message ?: "Network discovery failed"
+            } finally {
+                discovering = false
+            }
+        }
+    }
 
     fun runAutomation(profile: AutomationProfile, confirmed: Boolean) {
         scope.launch {
@@ -174,9 +204,23 @@ private fun WayControlApp(store: SecureConnectionStore) {
     }
 
     LaunchedEffect(Unit) {
-        store.load()?.let { (savedEndpoint, savedPin, savedToken) ->
+        val savedConnection = store.load()
+        savedConnection?.let { (savedEndpoint, savedPin, savedToken) ->
             endpoint = savedEndpoint; pin = savedPin; token = savedToken; status = "Connecting"
         }
+        val welcomeCompleted = firstRunPreferences.getBoolean("welcome_completed", false)
+        showWelcome = shouldShowFirstRunWelcome(
+            hasSavedConnection = savedConnection != null,
+            welcomeCompleted = welcomeCompleted,
+        )
+        if (savedConnection != null && !welcomeCompleted) markWelcomeCompleted()
+        if (showWelcome == true) {
+            selected = Destination.Settings
+            startDiscovery()
+        }
+    }
+    LaunchedEffect(showWelcome) {
+        if (showWelcome == false) contentScrollState.scrollTo(0)
     }
     LaunchedEffect(token, endpoint, pin, eventCounter, selected, refreshInterval) {
         if (token == null || endpoint.isBlank() || pin.isBlank()) return@LaunchedEffect
@@ -269,6 +313,7 @@ private fun WayControlApp(store: SecureConnectionStore) {
     )) {
         Scaffold(containerColor = Background, contentWindowInsets = WindowInsets.safeDrawing,
             bottomBar = {
+                if (showWelcome == false) {
                 NavigationBar(containerColor = Background, windowInsets = WindowInsets.navigationBars) {
                     destinations.forEach { destination ->
                         NavigationBarItem(selected = selected == destination, onClick = { selected = destination },
@@ -276,10 +321,13 @@ private fun WayControlApp(store: SecureConnectionStore) {
                             label = { Text(destination.label, maxLines = 1) })
                     }
                 }
+                }
             }) { insets ->
-            Column(Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState())
+            Column(Modifier.fillMaxSize().padding(insets).verticalScroll(contentScrollState)
                 .padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                when (selected) {
+                if (showWelcome == null) {
+                    Header("WayControl", "Restoring secure connection…")
+                } else when (selected) {
                     Destination.Home -> HomeScreen(
                         status, loading, error, snapshot.desktop, snapshot.workspaces, snapshot.windows,
                         snapshot.networkLatencyMs, capabilities.switchWorkspace, capabilities,
@@ -362,20 +410,7 @@ private fun WayControlApp(store: SecureConnectionStore) {
                                     error = "Update Google Play services or enter the pairing details manually. ${exception.message.orEmpty()}".trim()
                                 }
                         },
-                        onDiscover = {
-                            discovering = true
-                            discoveryStatus = null
-                            scope.launch {
-                                try {
-                                    discoveredServers = LanDiscovery.discover()
-                                    discoveryStatus = if (discoveredServers.isEmpty()) "No WayControl servers found on this network" else "Found ${discoveredServers.size} server(s)"
-                                } catch (exception: Exception) {
-                                    discoveryStatus = exception.message ?: "Network discovery failed"
-                                } finally {
-                                    discovering = false
-                                }
-                            }
-                        },
+                        onDiscover = { startDiscovery() },
                         onPair = {
                             loading = true; error = null; status = "Waiting for Linux approval"
                             scope.launch {
@@ -391,13 +426,21 @@ private fun WayControlApp(store: SecureConnectionStore) {
                                     }
                                     check(approvedToken != null) { "Approval timed out. Request a fresh pairing code." }
                                     store.save(endpoint, pin, approvedToken!!)
+                                    markWelcomeCompleted()
+                                    selected = Destination.Home
                                     token = approvedToken; status = "Connected"; error = null
                                 } catch (e: Exception) { status = "Pairing failed"; error = e.message ?: "Pairing failed" }
                                 finally { loading = false }
                             }
                         }, onDisconnect = {
+                            markWelcomeCompleted()
                             store.clear(); token = null; snapshot = snapshot.cleared(); status = "Disconnected"; endpoint = ""; pin = ""; error = null
-                        }, store = store, setToken = { token = it }, setStatus = { status = it }, setError = { error = it }, setLoading = { loading = it }
+                        }, store = store, setToken = { token = it }, setStatus = { status = it }, setError = { error = it }, setLoading = { loading = it },
+                        welcome = showWelcome == true,
+                        onSkipWelcome = {
+                            markWelcomeCompleted()
+                            selected = Destination.Home
+                        },
                     )
                 }
                 if (error != null && selected != Destination.Settings) Text(error!!, color = Color(0xFFE6A6B8))
@@ -1001,15 +1044,22 @@ private fun HomeQuickActions(
     }
 }
 
-@Composable private fun SettingsScreen(endpoint: String, setEndpoint: (String) -> Unit, pin: String, setPin: (String) -> Unit,
+@Composable internal fun SettingsScreen(endpoint: String, setEndpoint: (String) -> Unit, pin: String, setPin: (String) -> Unit,
     code: String, setCode: (String) -> Unit, status: String, error: String?, loading: Boolean, onPair: () -> Unit,
     refreshInterval: TelemetryRefreshInterval, onRefreshIntervalChange: (TelemetryRefreshInterval) -> Unit,
     discoveredServers: List<DiscoveredServer>, discoveryStatus: String?, discovering: Boolean, onDiscover: () -> Unit,
     scanningQr: Boolean, onScanQr: () -> Unit,
     onDisconnect: () -> Unit, store: SecureConnectionStore, setToken: (String) -> Unit,
-    setStatus: (String) -> Unit, setError: (String?) -> Unit, setLoading: (Boolean) -> Unit) {
-    Header("Settings", "Secure desktop connection")
-    TelemetryRefreshSection(refreshInterval, onRefreshIntervalChange)
+    setStatus: (String) -> Unit, setError: (String?) -> Unit, setLoading: (Boolean) -> Unit,
+    welcome: Boolean = false, onSkipWelcome: () -> Unit = {}) {
+    if (welcome) {
+        Header("Welcome to WayControl", "Securely connect your Linux desktop")
+        Text("Find your desktop, verify its certificate, and approve pairing in the Linux terminal.", color = SecondaryText)
+        Button(onClick = onSkipWelcome, enabled = !loading) { Text("Continue without pairing") }
+    } else {
+        Header("Settings", "Secure desktop connection")
+        TelemetryRefreshSection(refreshInterval, onRefreshIntervalChange)
+    }
     Text("Scan the pairing QR shown by the trusted Linux terminal, or enter the HTTPS address, certificate fingerprint, and short-lived code manually. Approve the request in the Linux terminal.", color = SecondaryText)
     PairingQrSection(scanningQr, onScanQr, enabled = !loading)
     LanDiscoverySection(discoveredServers, discoveryStatus, discovering, onDiscover, setEndpoint)
