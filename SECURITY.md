@@ -10,6 +10,7 @@
 - The authenticated Hyprland event stream is bounded to four concurrent clients and limits event lines to 8 KiB.
 - Local approval, listing, and revocation use a mode-0600 Unix socket in the user's runtime directory. The server binds to loopback by default.
 - Local admin requests are newline-delimited, capped at 8 KiB, and have a two-second read deadline so an idle same-user socket client cannot hold the admin loop indefinitely.
+- GitHub Actions workflows grant the repository token read-only `contents` permission; release-signing verification uses an ephemeral CI-only key.
 
 ## Remaining security work
 
