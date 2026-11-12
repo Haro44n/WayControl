@@ -67,3 +67,11 @@ The live loopback harness and a standalone CI smoke test send an authenticated H
 ## Review performed (2026-11-12)
 
 A follow-up review found that the global pairing attempt counter included valid codes. On a LAN-bound server, an unauthenticated client could spend the eight-attempt budget and temporarily prevent the device holding the correct live code from pairing. Invalid and expired codes still count toward the existing global limit, while a valid unexpired code can proceed after the invalid-attempt budget is exhausted. A regression test covers eight invalid attempts, rate limiting on the ninth, and success with the live code afterward. This reduces pairing denial of service; it does not change the short-lived code or local approval requirements.
+
+## Review performed (2026-11-12)
+
+A focused follow-up source review covered the API route/authentication flow, pairing and device-token lifecycle, per-device rate limits and event bounds, Android TLS pinning and Keystore credential storage, local admin-socket permissions, fixed host-command arguments, and the CI workflow. No additional confirmed vulnerability was found in those reviewed paths. This is not a complete independent security assessment.
+
+The current source also passed `python3 scripts/test-loopback.py` against the active Hyprland session and `python3 scripts/test-http-framing.py` against a temporary local TLS daemon. These controlled local tests verified pairing/approval, unauthenticated privileged-operation denial, reconnect, malformed and oversized request rejection, credential revocation, and connection closure after conflicting HTTP framing. Neither run simulates an attacker on an untrusted LAN.
+
+The current environment has no installed `cargo-audit`, `gitleaks`, or `cargo-fuzz` executable, so this review did not refresh dependency, secret, or coverage-guided fuzz scans. Previously recorded scan results remain tied to their documented revisions. Physical Android QR scanning and multi-vendor device validation remain outstanding.
