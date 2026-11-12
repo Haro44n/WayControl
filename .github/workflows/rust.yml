@@ -105,5 +105,23 @@ jobs:
           profile: pixel_2
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
-          script: ./gradlew connectedDebugAndroidTest
+          script: |
+            ./gradlew connectedDebugAndroidTest
+            adb uninstall dev.waycontrol
+            adb install app/build/outputs/apk/release/app-release.apk
+            adb shell monkey -p dev.waycontrol -c android.intent.category.LAUNCHER 1
+            launched=0
+            for attempt in $(seq 1 20); do
+              app_pid="$(adb shell pidof dev.waycontrol | tr -d '\r')"
+              if [ -n "$app_pid" ]; then
+                echo "Signed minified release app running with PID $app_pid"
+                launched=1
+                break
+              fi
+              sleep 1
+            done
+            if [ "$launched" -ne 1 ]; then
+              adb logcat -d -s AndroidRuntime:E
+              exit 1
+            fi
           working-directory: android
