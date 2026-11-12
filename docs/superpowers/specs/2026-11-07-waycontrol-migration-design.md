@@ -2,7 +2,7 @@
 
 ## Intent
 
-Rename WayControl to **WayControl** and evolve the existing Android companion and Rust daemon so compositor-specific operations pass through a modular backend contract. The immediate priority is preserving the tested Hyprland experience while making capability boundaries explicit for future Wayland compositors.
+Rename HyprControl to **WayControl** and evolve the existing Android companion and Rust daemon so compositor-specific operations pass through a modular backend contract. The immediate priority is preserving the tested Hyprland experience while making capability boundaries explicit for future Wayland compositors.
 
 ## Goals
 
@@ -36,7 +36,6 @@ Rename WayControl to **WayControl** and evolve the existing Android companion an
 - Keep all remote operations typed and allowlisted.
 - Keep unavailable telemetry represented as unavailable, not fabricated values.
 - Preserve data, security, and reconnect behavior while changing names and backend wiring.
-- The current checkout has no `.git` metadata, so changes cannot be reviewed through `git diff` unless repository metadata is restored. Use explicit file inspection and test/build evidence.
 
 ## Success evidence
 

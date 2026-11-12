@@ -57,6 +57,6 @@ GNOME adapter selection requires both a GNOME desktop identity and `XDG_SESSION_
 
 Builder review confirmed these scope decisions: Wayland-only activation, fullscreen toggle support, and no floating toggle. The existing project objective supplies the platform scope; Mutter exposes the fullscreen operation, while floating has no equivalent shared operation.
 
-## Approval boundary
+## Approval and implementation status
 
-This design adds an optional in-process GNOME Shell extension because the required workspace/window APIs are otherwise unavailable. Do not implement or package that extension until this design is approved.
+The optional in-process GNOME Shell extension required explicit approval because it runs inside the compositor process with the user's session authority. The user approved the proposed GNOME Shell extension and Rust D-Bus adapter. Both are implemented; the Arch package includes the extension files but does not enable it. Nested GNOME Shell CI validates the bridge, while validation in a user's own GNOME Wayland session remains outstanding.
