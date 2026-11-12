@@ -11,7 +11,7 @@ jobs:
   kwin-live:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install KWin test compositor and dependencies
         run: sudo apt-get update && sudo apt-get install -y kwin-wayland dbus-daemon
       - name: Exercise KWin adapter in a virtual compositor
@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     container: archlinux:latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install Niri test compositor and dependencies
         run: pacman -Syu --noconfirm --needed niri foot ttf-dejavu libxcursor libxkbcommon-x11 xorg-server-xvfb xorg-xdpyinfo dbus rust cargo
       - name: Exercise Niri adapter in a nested compositor
@@ -30,8 +30,8 @@ jobs:
   sway-live:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - name: Install headless Sway test dependencies
         run: sudo apt-get update && sudo apt-get install -y sway xwayland xterm dbus-daemon
       - name: Exercise Sway adapter against a headless compositor
@@ -40,9 +40,9 @@ jobs:
   gnome-live:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Install nested GNOME Shell test dependencies
         run: sudo apt-get update && sudo apt-get install -y dbus-daemon fuse3 gnome-shell gjs libglib2.0-bin weston xvfb
       - name: Report GNOME test runtime
@@ -53,11 +53,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Install session bus for KWin adapter tests
         run: sudo apt-get update && sudo apt-get install -y dbus-daemon
       - run: cargo fmt --all -- --check
@@ -72,13 +72,13 @@ jobs:
   android:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: temurin
           java-version: '21'
-      - uses: android-actions/setup-android@v4
-      - uses: gradle/actions/setup-gradle@v6
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6
       - run: sdkmanager --channel=3 "platforms;android-37.0" "build-tools;37.0.0"
       - run: ./gradlew testDebugUnitTest lintDebug assembleDebug assembleRelease
         working-directory: android
@@ -100,7 +100,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Run Compose instrumentation tests on Android 16
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
           api-level: 36
           target: google_apis

@@ -19,7 +19,7 @@
 - Fuzzing currently covers bounded JSON request-envelope parsing and typed validation. Coverage-guided fuzzing does not replace a hostile-network penetration test or live device checks.
 - Power and monitor operations are available only to paired devices, but their execution has not been tested on the live desktop. Lock, systemctl power commands, wpctl, playerctl, and DPMS availability depend on the user's session installation. Server-side policy currently validates authentication and allowlisted values; confirmation is a client UI behavior.
 - The daemon can be configured to bind to a LAN address. It does not discover or firewall-protect that address; operators must restrict access to trusted networks.
-- Third-party GitHub Actions are referenced by version tags instead of immutable commit SHAs; pinning reviewed action revisions remains a supply-chain hardening task.
+- Third-party GitHub Actions are pinned to full commit SHAs with their published version tags retained as comments; update these references only after reviewing the target revision.
 - Allowlisted host commands have a five-second deadline and cap captured output at 64 KiB stdout and 8 KiB stderr. This prevents unbounded command output from exhausting daemon memory; timeout or output-limit cancellation kills the child process.
 
 ## Review performed (2026-11-07)
