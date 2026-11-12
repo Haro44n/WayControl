@@ -12,7 +12,7 @@ import tempfile
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-BINARY = ROOT / "target/release/waycontrold"
+BINARY = pathlib.Path(os.environ.get("WAYCONTROL_DAEMON", ROOT / "target/release/waycontrold")).resolve()
 PORT = int(os.environ.get("WAYCONTROL_TEST_PORT", "18765"))
 
 
@@ -26,6 +26,8 @@ def proc_metrics(pid):
 
 
 def main():
+    if not BINARY.is_file() or not os.access(BINARY, os.X_OK):
+        raise RuntimeError(f"daemon executable not found or not executable: {BINARY}")
     with tempfile.TemporaryDirectory(prefix="h-") as temp:
         base = pathlib.Path(temp)
         config = base / "config"
