@@ -19,6 +19,24 @@ for attempt in $(seq 1 20); do
   app_pid="$(adb shell pidof dev.waycontrol 2>/dev/null | tr -d '\r' || true)"
   if [ -n "$app_pid" ]; then
     echo "Signed minified release app running with PID $app_pid"
+    if [ -n "${WAYCONTROL_SCREENSHOT_PATH:-}" ]; then
+      mkdir -p "$(dirname -- "$WAYCONTROL_SCREENSHOT_PATH")"
+      sleep 2
+      adb exec-out screencap -p >"$WAYCONTROL_SCREENSHOT_PATH"
+      python3 - "$WAYCONTROL_SCREENSHOT_PATH" <<'PY'
+import pathlib
+import struct
+import sys
+
+image = pathlib.Path(sys.argv[1]).read_bytes()
+if len(image) < 8192 or not image.startswith(b"\x89PNG\r\n\x1a\n"):
+    raise SystemExit("Android screenshot is missing or is not a valid PNG")
+width, height = struct.unpack(">II", image[16:24])
+if width < 320 or height < 480:
+    raise SystemExit(f"Android screenshot dimensions are unexpectedly small: {width}x{height}")
+print(f"Captured WayControl Android screen: {width}x{height}, {len(image)} bytes")
+PY
+    fi
     exit 0
   fi
   sleep 1
