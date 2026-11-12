@@ -20,10 +20,12 @@ for attempt in $(seq 1 20); do
   if [ -n "$app_pid" ]; then
     echo "Signed minified release app running with PID $app_pid"
     if [ -n "${WAYCONTROL_SCREENSHOT_PATH:-}" ]; then
+      dashboard_screenshot_path="${WAYCONTROL_SCREENSHOT_PATH%.png}-dashboard.png"
       mkdir -p "$(dirname -- "$WAYCONTROL_SCREENSHOT_PATH")"
-      sleep 2
-      adb exec-out screencap -p >"$WAYCONTROL_SCREENSHOT_PATH"
-      python3 - "$WAYCONTROL_SCREENSHOT_PATH" <<'PY'
+      capture_screenshot() {
+        local screenshot_path="$1"
+        adb exec-out screencap -p >"$screenshot_path"
+        python3 - "$screenshot_path" <<'PY'
 import pathlib
 import struct
 import sys
@@ -36,6 +38,16 @@ if width < 320 or height < 480:
     raise SystemExit(f"Android screenshot dimensions are unexpectedly small: {width}x{height}")
 print(f"Captured WayControl Android screen: {width}x{height}, {len(image)} bytes")
 PY
+      }
+
+      sleep 2
+      capture_screenshot "$WAYCONTROL_SCREENSHOT_PATH"
+
+      # The pixel_2 CI profile is 1080x1920; this is the center of the
+      # first-run "Continue without pairing" button on that profile.
+      adb shell input tap 316 557
+      sleep 2
+      capture_screenshot "$dashboard_screenshot_path"
     fi
     exit 0
   fi
