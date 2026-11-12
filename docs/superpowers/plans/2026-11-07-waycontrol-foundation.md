@@ -38,9 +38,9 @@
 - Produces typed workspace/window models, version-1 allowlisted protocol envelopes, a Hyprland IPC client, and telemetry snapshots from Linux procfs.
 - Server command `waycontrold inspect` emits available real host data as JSON and reports unavailable sources explicitly.
 
-- [ ] Write parser and calculation tests first; verify they fail before implementation.
-- [ ] Implement typed parsing and source-specific errors.
-- [ ] Run `cargo test --workspace` and `cargo fmt --all -- --check`.
+- [x] Add parser and calculation regression tests for valid, malformed, unavailable, and first-sample cases.
+- [x] Implement typed parsing and source-specific errors.
+- [x] Run `cargo test --workspace` and `cargo fmt --all -- --check`.
 
 ### Task 2: Native Android shell
 
@@ -50,18 +50,24 @@
 - Compose app with Home, Workspaces, Windows, System, Settings destinations.
 - Home shows only connection-required placeholders until a trusted live backend exists.
 
-- [ ] Add project configuration and state-driven Compose navigation.
-- [ ] Add presentation tests for the disconnected state where tooling permits.
-- [ ] Attempt Gradle build only if Gradle and Android SDK are available; record otherwise.
+- [x] Add project configuration and state-driven Compose navigation.
+- [x] Add presentation tests for disconnected, capability-limited, and live-data states.
+- [x] Build the Android app and run JVM plus Android 16 emulator instrumentation tests.
 
 ### Task 3: Packaging and project documentation
 
 **Files:** `README.md`, `PROGRESS.md`, `LICENSE`, `packaging/**`, `.github/workflows/**`.
 
-- [ ] Document implemented behavior, security boundaries, installation, and known limitations.
-- [ ] Add a user-level systemd unit that does not listen on the network.
-- [ ] Add Rust CI and run locally available validation.
+- [x] Document implemented behavior, security boundaries, installation, and known limitations.
+- [x] Add a user-level systemd unit that binds to loopback by default.
+- [x] Add Rust, Android, and live-compositor CI and run validation.
 
-## Scope gaps tracked for later phases
+## Later phases completed
 
-Authenticated TLS pairing, Android network client, event streaming, window focus/actions, GPU/NVML, audio/MPRIS, power controls, automation, LAN discovery, Android lifecycle tests, and real device testing are not claimed by this foundation slice.
+- [x] Authenticated TLS pairing, encrypted Android credentials, local Linux approval, and revocation.
+- [x] Android network client, compositor capability negotiation, workspace/window screens, and lifecycle reconnection.
+- [x] Live compositor events plus independent telemetry, audio/MPRIS, GPU/NVML, power, and automation controls.
+- [x] LAN discovery and QR pairing entry, with certificate pinning and explicit approval preserved.
+- [x] Rust/Android builds, Android 16 instrumentation, Hyprland loopback integration, package build, and systemd sandbox integration.
+
+Physical Poco M5 behavior, QR camera scanning, discovery from a phone over physical Wi-Fi, and users' own Sway/Niri/Plasma/GNOME sessions remain open; see `PROGRESS.md` for current evidence and limits.
