@@ -46,7 +46,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -145,7 +144,7 @@ internal fun WayControlApp(store: SecureConnectionStore) {
     var automationProfiles by remember(context) { mutableStateOf(automationStore.load()) }
     var automationResult by remember { mutableStateOf<JSONObject?>(null) }
     var profileConfirmation by remember { mutableStateOf<AutomationProfile?>(null) }
-    var eventCounter by remember { mutableIntStateOf(0) }
+    val compositorEventRefreshSignals = remember { CompositorEventRefreshSignals() }
     var discoveredServers by remember { mutableStateOf(emptyList<DiscoveredServer>()) }
     var discoveryStatus by remember { mutableStateOf<String?>(null) }
     var discovering by remember { mutableStateOf(false) }
@@ -224,7 +223,7 @@ internal fun WayControlApp(store: SecureConnectionStore) {
     LaunchedEffect(showWelcome) {
         if (showWelcome == false) contentScrollState.scrollTo(0)
     }
-    LaunchedEffect(token, endpoint, pin, eventCounter, selected, refreshInterval) {
+    LaunchedEffect(token, endpoint, pin, selected, refreshInterval) {
         if (token == null || endpoint.isBlank() || pin.isBlank()) return@LaunchedEffect
         suspend fun refresh(): Boolean {
             loading = true
@@ -263,12 +262,18 @@ internal fun WayControlApp(store: SecureConnectionStore) {
         }
         val backoff = ReconnectBackoff()
         suspend fun maintainConnection() {
+            var connected = false
+            var delayMillis = 0L
             while (true) {
-                if (refresh()) {
+                if (delayMillis > 0) {
+                    compositorEventRefreshSignals.awaitRefresh(delayMillis, connected)
+                }
+                connected = refresh()
+                if (connected) {
                     backoff.reset()
-                    delay(refreshInterval.delayMillis(selected))
+                    delayMillis = refreshInterval.delayMillis(selected)
                 } else {
-                    delay(backoff.nextDelayMillis())
+                    delayMillis = backoff.nextDelayMillis()
                 }
             }
         }
@@ -338,7 +343,7 @@ internal fun WayControlApp(store: SecureConnectionStore) {
                 WayControlClient(endpoint, pin, savedToken).readEvents(
                     shouldStop = { !parentContext.isActive },
                     onConnected = onConnected,
-                    onEvent = { scope.launch { eventCounter = (eventCounter + 1) % 100_000 } },
+                    onEvent = { compositorEventRefreshSignals.signal() },
                 )
             }
         }
