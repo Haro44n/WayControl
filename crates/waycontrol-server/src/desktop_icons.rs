@@ -6,7 +6,7 @@ use std::{
     sync::Mutex,
 };
 
-const MAX_DESKTOP_ENTRY_BYTES: u64 = 16 * 1024;
+const MAX_DESKTOP_ENTRY_BYTES: u64 = 64 * 1024;
 const MAX_ICON_PNG_BYTES: u64 = 32 * 1024;
 const MAX_ICON_DIMENSION: u32 = 512;
 const MAX_ICON_CACHE_ENTRIES: usize = 256;
@@ -237,7 +237,10 @@ mod tests {
         std::fs::create_dir_all(&icon_dir).unwrap();
         std::fs::write(
             data_dir.0.join("applications/org.example.Editor.desktop"),
-            "[Desktop Entry]\nName=Editor\nIcon=editor-icon\n",
+            format!(
+                "[Desktop Entry]\nName=Editor\nComment={}\nIcon=editor-icon\n",
+                "x".repeat(20 * 1024)
+            ),
         )
         .unwrap();
         let png = STANDARD

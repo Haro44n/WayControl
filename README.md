@@ -6,7 +6,7 @@ WayControl is a native Android companion for Wayland desktops. The Hyprland adap
 
 Hyprland reports pinned state and supports pin/unpin for floating windows; the adapter rejects tiled windows. It also moves selected windows between currently available monitors and centers floating windows through addressed typed IPC operations.
 
-The Android Windows screen shows an application icon when the Linux host can resolve the window's app ID to a local XDG desktop entry and PNG icon. Icons are capped at 32 KiB and 512×512 pixels; missing or unsupported icons leave the text-only row intact.
+The Android Windows screen shows an application icon when the Linux host can resolve the window's app ID to a local XDG desktop entry and PNG icon. Desktop entries are capped at 64 KiB; icons are capped at 32 KiB and 512×512 pixels. Missing or unsupported icons leave the text-only row intact.
 
 ## Release status: PARTIAL
 

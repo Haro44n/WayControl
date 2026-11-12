@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise the release daemon against this user's live Hyprland session."""
+import base64
 import http.client
 import json
 import os
@@ -224,6 +225,16 @@ def main():
             assert status == 200 and workspaces["success"] and isinstance(workspaces["payload"], list), f"workspace list returned {status}"
             status, windows = api("window.list", "windows")
             assert status == 200 and windows["success"] and isinstance(windows["payload"], list), f"window list returned {status}"
+            firefox = next((item for item in windows["payload"] if item.get("app_id", "").lower() == "firefox"), None)
+            if firefox:
+                encoded_icon = firefox.get("icon_png_base64")
+                assert isinstance(encoded_icon, str), "Firefox has a local desktop icon but the API returned no window icon"
+                icon = base64.b64decode(encoded_icon, validate=True)
+                assert 24 <= len(icon) <= 32 * 1024, "window icon exceeds its PNG byte limit"
+                assert icon[:8] == b"\x89PNG\r\n\x1a\n" and icon[12:16] == b"IHDR", "window icon is not a PNG image"
+                width, height = int.from_bytes(icon[16:20], "big"), int.from_bytes(icon[20:24], "big")
+                assert 1 <= width <= 512 and 1 <= height <= 512, "window icon exceeds its decode dimensions"
+                print(f"Resolved a live Firefox window icon ({width}×{height}, {len(icon)} bytes)")
             status, monitors = api("monitor.list", "monitors")
             assert status == 200 and monitors["success"] and isinstance(monitors["payload"], list), f"monitor list returned {status}"
             active = next((item for item in workspaces["payload"] if item["active"]), None)
