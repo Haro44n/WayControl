@@ -373,6 +373,19 @@ impl CompositorBackend for SwayAdapter {
             })
     }
     async fn set_monitor_power(&self, name: &str, enabled: bool) -> Result<(), String> {
+        let outputs = self.request(GET_OUTPUTS, &[]).await?;
+        let outputs = outputs
+            .as_array()
+            .ok_or_else(|| "invalid Sway output response".to_owned())?;
+        if !outputs
+            .iter()
+            .any(|output| output.get("name").and_then(Value::as_str) == Some(name))
+        {
+            return Err("unknown Sway output".into());
+        }
+        if matches!(name, "*" | "-" | "--") {
+            return Err("monitor power requires a specific Sway output".into());
+        }
         let power = if enabled { "on" } else { "off" };
         self.command(format!("output {} power {power}", Self::quote(name)?))
             .await
@@ -687,6 +700,16 @@ mod tests {
         let (path, listener) = mock_socket().await;
         let peer = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
+            let (kind, _) = receive_request(&mut stream).await;
+            assert_eq!(kind, GET_OUTPUTS);
+            reply(
+                &mut stream,
+                GET_OUTPUTS,
+                br#"[{"name":"DP-1","power":true}]"#,
+            )
+            .await;
+
+            let (mut stream, _) = listener.accept().await.unwrap();
             let (kind, payload) = receive_request(&mut stream).await;
             assert_eq!(kind, RUN_COMMAND);
             assert_eq!(payload, br#"output "DP-1" power off"#);
@@ -698,6 +721,69 @@ mod tests {
 
         adapter.set_monitor_power("DP-1", false).await.unwrap();
 
+        peer.await.unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn monitor_power_rejects_wildcard_and_focused_output_aliases() {
+        for selector in ["*", "-", "--"] {
+            let (path, listener) = mock_socket().await;
+            let peer = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let (kind, _) = receive_request(&mut stream).await;
+                assert_eq!(kind, GET_OUTPUTS);
+                let outputs = format!(r#"[{{"name":"{selector}"}}]"#);
+                reply(&mut stream, GET_OUTPUTS, outputs.as_bytes()).await;
+                assert!(
+                    tokio::time::timeout(std::time::Duration::from_millis(50), listener.accept())
+                        .await
+                        .is_err(),
+                    "Sway selector {selector:?} must not reach RUN_COMMAND"
+                );
+            });
+            let adapter = SwayAdapter {
+                socket: Some(path.clone()),
+            };
+
+            let error = adapter
+                .set_monitor_power(selector, false)
+                .await
+                .unwrap_err();
+
+            assert!(error.contains("specific Sway output"), "{error}");
+            peer.await.unwrap();
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn monitor_power_rejects_outputs_missing_from_sway_output_list() {
+        let (path, listener) = mock_socket().await;
+        let peer = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (kind, _) = receive_request(&mut stream).await;
+            assert_eq!(kind, GET_OUTPUTS);
+            reply(
+                &mut stream,
+                GET_OUTPUTS,
+                br#"[{"name":"DP-1","power":true}]"#,
+            )
+            .await;
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(50), listener.accept())
+                    .await
+                    .is_err(),
+                "an unlisted output must not reach RUN_COMMAND"
+            );
+        });
+        let adapter = SwayAdapter {
+            socket: Some(path.clone()),
+        };
+
+        let error = adapter.set_monitor_power("DP-2", false).await.unwrap_err();
+
+        assert!(error.contains("unknown Sway output"), "{error}");
         peer.await.unwrap();
         std::fs::remove_file(path).unwrap();
     }
