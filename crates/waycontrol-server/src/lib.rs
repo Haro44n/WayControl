@@ -51,6 +51,8 @@ use waycontrol_protocol::{
     VolumeDirection,
 };
 
+mod desktop_icons;
+
 const PAIRING_TTL: Duration = Duration::from_secs(180);
 const PENDING_PAIR_TTL: Duration = Duration::from_secs(300);
 const PAIRING_RATE_WINDOW: Duration = Duration::from_secs(60);
@@ -1179,6 +1181,7 @@ struct Inner {
     device_file: PathBuf,
     event_slots: Arc<Semaphore>,
     api_rate_windows: Mutex<HashMap<String, RequestRateWindow>>,
+    desktop_icons: Arc<desktop_icons::DesktopIconCache>,
 }
 
 #[derive(Clone)]
@@ -1229,6 +1232,7 @@ impl AppState {
             device_file,
             event_slots: Arc::new(Semaphore::new(4)),
             api_rate_windows: Mutex::new(HashMap::new()),
+            desktop_icons: Arc::new(desktop_icons::DesktopIconCache::default()),
         })))
     }
 
@@ -1802,7 +1806,22 @@ async fn request(
             .launch_application(&desktop_id)
             .await
             .map(|()| json!({})),
-        Operation::ListWindows => state.0.compositor.windows().await.map(|data| json!(data)),
+        Operation::ListWindows => match state.0.compositor.windows().await {
+            Ok(windows) => {
+                let icon_cache = Arc::clone(&state.0.desktop_icons);
+                match tokio::task::spawn_blocking(move || {
+                    let mut windows = windows;
+                    desktop_icons::assign_window_icons(&mut windows, &icon_cache);
+                    windows
+                })
+                .await
+                {
+                    Ok(windows) => Ok(json!(windows)),
+                    Err(error) => Err(format!("failed to resolve window icons: {error}")),
+                }
+            }
+            Err(error) => Err(error),
+        },
         Operation::SwitchWorkspace { workspace_id } => state
             .0
             .compositor

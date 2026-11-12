@@ -221,6 +221,7 @@ impl HyprlandClient {
                         .and_then(|id| monitor_names.get(&id).cloned()),
                     floating: Some(c.get("floating").and_then(Value::as_bool).unwrap_or(false)),
                     pinned: c.get("pinned").and_then(Value::as_bool),
+                    icon_png_base64: None,
                     fullscreen: c.get("fullscreen").and_then(Value::as_i64).unwrap_or(0) != 0,
                 })
             })

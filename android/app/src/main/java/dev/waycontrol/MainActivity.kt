@@ -1,6 +1,7 @@
 package dev.waycontrol
 
 import android.os.Bundle
+import android.graphics.Bitmap
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.clickable
@@ -49,6 +50,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -635,13 +637,29 @@ private fun HomeQuickActions(
         Text(group.label, color = SecondaryText, style = MaterialTheme.typography.titleSmall)
         for (item in group.windows) {
             val address = item.optString("address")
+            val iconData = item.optString("icon_png_base64").takeIf(String::isNotBlank)
+            val iconBitmap by produceState<Bitmap?>(null, iconData) {
+                value = withContext(Dispatchers.Default) { iconData?.let(::decodeWindowIcon) }
+            }
             var menuOpen by remember(address) { mutableStateOf(false) }
             var monitorMenuOpen by remember(address) { mutableStateOf(false) }
             Card {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(item.optString("title", "Untitled window"), color = MainText, fontWeight = FontWeight.Medium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (iconBitmap != null) {
+                            Image(
+                                bitmap = iconBitmap.asImageBitmap(),
+                                contentDescription = null,
+                                modifier = Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)),
+                            )
+                        }
+                        Column {
+                            Text(item.optString("title", "Untitled window"), color = MainText, fontWeight = FontWeight.Medium)
+                            Text(item.optString("app_id", "Unknown app"), color = SecondaryText)
+                        }
+                    }
                     val monitorName = item.optString("monitor").takeIf { it.isNotBlank() && it != "null" } ?: "—"
-                    Text("${item.optString("app_id", "Unknown app")} · workspace ${item.optString("workspace_id", "—")} · $monitorName", color = SecondaryText)
+                    Text("workspace ${item.optString("workspace_id", "—")} · $monitorName", color = SecondaryText)
                     if (item.optBoolean("focused")) Text("FOCUSED", color = Color(0xFFB9567B), style = MaterialTheme.typography.labelSmall)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (capabilities.focusWindow) Button(onClick = { action("window.focus", address, JSONObject()) }) { Text("Focus") }

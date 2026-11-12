@@ -190,6 +190,7 @@ fn collect_windows(
                 monitor: monitor.map(str::to_owned),
                 floating: Some(floating),
                 pinned: None,
+                icon_png_base64: None,
                 fullscreen: node
                     .get("fullscreen_mode")
                     .and_then(Value::as_i64)

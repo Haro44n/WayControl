@@ -175,6 +175,7 @@ fn map_windows(records: Vec<WindowRecord>) -> Result<Vec<Window>, String> {
                     .transpose()?,
                 floating: None,
                 pinned: None,
+                icon_png_base64: None,
                 fullscreen: record.fullscreen,
                 focused: record.focused,
             })

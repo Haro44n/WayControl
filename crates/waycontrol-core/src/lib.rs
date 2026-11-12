@@ -87,6 +87,9 @@ pub struct Window {
     /// Whether the compositor keeps this window visible across workspaces.
     /// `None` means the backend cannot report pinned state.
     pub pinned: Option<bool>,
+    /// A bounded PNG application icon resolved from local desktop metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_png_base64: Option<String>,
     pub fullscreen: bool,
     pub focused: bool,
 }
@@ -146,6 +149,7 @@ mod window_json_tests {
             monitor: None,
             floating: None,
             pinned: None,
+            icon_png_base64: None,
             fullscreen: false,
             focused: false,
         };
@@ -172,6 +176,7 @@ mod window_json_tests {
             fullscreen: false,
             focused: false,
             pinned: Some(true),
+            icon_png_base64: None,
         };
 
         let value = serde_json::to_value(window).unwrap();
@@ -190,5 +195,25 @@ mod window_json_tests {
         }))
         .unwrap();
         assert_eq!(unknown.pinned, None);
+    }
+
+    #[test]
+    fn window_wire_model_preserves_an_optional_application_icon() {
+        let window: Window = serde_json::from_value(serde_json::json!({
+            "address": "0xabc",
+            "title": "Editor",
+            "app_id": "org.example.Editor",
+            "workspace_id": 2,
+            "monitor": "DP-1",
+            "floating": false,
+            "pinned": null,
+            "fullscreen": false,
+            "focused": true,
+            "icon_png_base64": "iVBORw0KGgo="
+        }))
+        .unwrap();
+
+        let value = serde_json::to_value(window).unwrap();
+        assert_eq!(value["icon_png_base64"], "iVBORw0KGgo=");
     }
 }

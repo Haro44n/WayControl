@@ -168,6 +168,7 @@ impl NiriAdapter {
                             .unwrap_or(false),
                     ),
                     pinned: None,
+                    icon_png_base64: None,
                     fullscreen: entry
                         .get("is_fullscreen")
                         .and_then(Value::as_bool)
