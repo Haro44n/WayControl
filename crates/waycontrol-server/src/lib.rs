@@ -1257,16 +1257,17 @@ impl AppState {
         }
         let mut state = self.0.pairing.lock().await;
         let now = tokio::time::Instant::now();
-        if now.saturating_duration_since(state.attempt_window) >= PAIRING_RATE_WINDOW {
-            state.attempt_window = now;
-            state.attempts = 0;
-        }
-        state.attempts = state.attempts.saturating_add(1);
-        if state.attempts > PAIRING_ATTEMPT_LIMIT {
-            return Err(PairingError::RateLimited);
-        }
         if now >= state.code_expires || !constant_time_eq(code.as_bytes(), state.code.as_bytes()) {
-            return Err(PairingError::InvalidCode);
+            if now.saturating_duration_since(state.attempt_window) >= PAIRING_RATE_WINDOW {
+                state.attempt_window = now;
+                state.attempts = 0;
+            }
+            state.attempts = state.attempts.saturating_add(1);
+            return if state.attempts > PAIRING_ATTEMPT_LIMIT {
+                Err(PairingError::RateLimited)
+            } else {
+                Err(PairingError::InvalidCode)
+            };
         }
         state.code_expires = now;
         let request_id = random_hex(16)?;
@@ -3346,6 +3347,29 @@ mod tests {
         state.approve_pairing(&request_id).await.unwrap();
         let (_, token) = state.pairing_status(&request_id).await.unwrap().unwrap();
         assert!(state.authenticated_device(&token).await.is_some());
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[tokio::test]
+    async fn valid_pairing_code_still_works_after_invalid_attempt_limit() {
+        let (state, path) = test_state().await;
+        let info = state.pairing_info().await.unwrap();
+        let mut wrong_code = info.code.clone().into_bytes();
+        wrong_code[0] = if wrong_code[0] == b'0' { b'1' } else { b'0' };
+        let wrong_code = String::from_utf8(wrong_code).unwrap();
+
+        for _ in 0..PAIRING_ATTEMPT_LIMIT {
+            assert_eq!(
+                state.begin_pairing(&wrong_code, "phone").await.unwrap_err(),
+                PairingError::InvalidCode
+            );
+        }
+        assert_eq!(
+            state.begin_pairing(&wrong_code, "phone").await.unwrap_err(),
+            PairingError::RateLimited
+        );
+        assert!(state.begin_pairing(&info.code, "phone").await.is_ok());
+
         let _ = std::fs::remove_dir_all(path);
     }
 
