@@ -641,14 +641,15 @@ private fun HomeQuickActions(
             val iconBitmap by produceState<Bitmap?>(null, iconData) {
                 value = withContext(Dispatchers.Default) { iconData?.let(::decodeWindowIcon) }
             }
+            val bitmap = iconBitmap
             var menuOpen by remember(address) { mutableStateOf(false) }
             var monitorMenuOpen by remember(address) { mutableStateOf(false) }
             Card {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        if (iconBitmap != null) {
+                        if (bitmap != null) {
                             Image(
-                                bitmap = iconBitmap.asImageBitmap(),
+                                bitmap = bitmap.asImageBitmap(),
                                 contentDescription = null,
                                 modifier = Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)),
                             )
