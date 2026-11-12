@@ -18,8 +18,8 @@ use tokio::{
 use waycontrol_compositor::CompositorBackend;
 use waycontrol_server::{
     AdminRequest, AdminResponse, AppState, HostSystemControls, SystemControlBackend,
-    WaylandBackend, admin_command, ensure_server_certificate, lan_discovery_bind_address, router,
-    run_lan_discovery, socket_address_from_env,
+    WaylandBackend, admin_command, ensure_server_certificate, lan_discovery_bind_address,
+    run_lan_discovery, socket_address_from_env, tls_server,
 };
 
 const MAX_ADMIN_REQUEST_BYTES: usize = 8192;
@@ -124,7 +124,7 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
-    let web = axum_server::bind_rustls(bind, tls).serve(router(state.clone()).into_make_service());
+    let web = tls_server(state.clone(), bind, tls);
     let discovery_task = async move {
         if let Some((socket, hostname)) = discovery {
             run_lan_discovery(socket, bind, &hostname).await?;

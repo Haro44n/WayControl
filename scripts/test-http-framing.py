@@ -13,6 +13,12 @@ import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BINARY = ROOT / "target/release/waycontrold"
+MAX_CONCURRENT_API_CONNECTIONS = 64
+
+
+def open_idle_tls(context, port):
+    raw = socket.create_connection(("127.0.0.1", port), timeout=5)
+    return context.wrap_socket(raw, server_hostname="127.0.0.1")
 
 
 def main():
@@ -110,6 +116,35 @@ def main():
             assert response.status == 200 and pair_status["status"] == "approved", pair_status
             token = pair_status["token"]
 
+            # Completed TLS sessions that never send HTTP must still consume a
+            # bounded slot so unauthenticated clients cannot exhaust daemon FDs.
+            idle_connections = []
+            try:
+                for _ in range(MAX_CONCURRENT_API_CONNECTIONS):
+                    idle_connections.append(open_idle_tls(tls, port))
+                try:
+                    excess = open_idle_tls(tls, port)
+                except (OSError, TimeoutError):
+                    pass
+                else:
+                    excess.close()
+                    raise AssertionError("server accepted more than 64 concurrent TLS connections")
+
+                idle_connections.pop().close()
+                deadline = time.monotonic() + 2
+                while True:
+                    try:
+                        recovered = open_idle_tls(tls, port)
+                        recovered.close()
+                        break
+                    except (OSError, TimeoutError):
+                        if time.monotonic() >= deadline:
+                            raise AssertionError("closing a TLS connection did not release its slot")
+                        time.sleep(0.01)
+            finally:
+                for connection in idle_connections:
+                    connection.close()
+
             first_body = json.dumps(
                 {"version": 1, "id": "framing-first", "type": "ping"}, separators=(",", ":")
             ).encode()
@@ -167,7 +202,7 @@ def main():
             result = json.loads(response.read())
             fresh.close()
             assert response.status == 200 and result["success"], "fresh connection failed after framing probe"
-            print("PASS: authenticated pairing and ping; conflicting framing closes after one response")
+            print("PASS: pairing, 64-connection cap and recovery, authenticated ping, and HTTP framing rejection")
         finally:
             proc.terminate()
             try:

@@ -25,17 +25,22 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     convert::Infallible,
     ffi::{CStr, CString},
+    future::Future,
+    io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     path::{Path as FsPath, PathBuf},
+    pin::Pin,
     sync::Arc,
+    task::{Context, Poll},
     time::Duration,
 };
 use thiserror::Error;
+use tokio::net::TcpStream;
 use tokio::net::{UdpSocket, UnixStream};
 use tokio::sync::Mutex;
 use tokio::{
     io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt},
-    sync::Semaphore,
+    sync::{OwnedSemaphorePermit, Semaphore},
 };
 use waycontrol_backend_gnome::GnomeAdapter;
 use waycontrol_backend_hyprland::HyprlandAdapter;
@@ -150,6 +155,81 @@ pub async fn run_lan_discovery(
     }
 }
 pub const MAX_API_BODY_BYTES: usize = 64 * 1024;
+const MAX_CONCURRENT_API_CONNECTIONS: usize = 64;
+
+#[derive(Clone)]
+struct ConnectionLimitAcceptor {
+    permits: Arc<Semaphore>,
+}
+
+impl ConnectionLimitAcceptor {
+    fn new(max_connections: usize) -> Self {
+        Self {
+            permits: Arc::new(Semaphore::new(max_connections)),
+        }
+    }
+}
+
+struct LimitedTcpStream {
+    stream: TcpStream,
+    _permit: OwnedSemaphorePermit,
+}
+
+impl tokio::io::AsyncRead for LimitedTcpStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buffer: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().stream).poll_read(context, buffer)
+    }
+}
+
+impl tokio::io::AsyncWrite for LimitedTcpStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buffer: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.get_mut().stream).poll_write(context, buffer)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().stream).poll_flush(context)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().stream).poll_shutdown(context)
+    }
+}
+
+impl<S> axum_server::accept::Accept<TcpStream, S> for ConnectionLimitAcceptor
+where
+    S: Send + 'static,
+{
+    type Stream = LimitedTcpStream;
+    type Service = S;
+    type Future = Pin<Box<dyn Future<Output = io::Result<(Self::Stream, S)>> + Send>>;
+
+    fn accept(&self, stream: TcpStream, service: S) -> Self::Future {
+        let permit = self.permits.clone().try_acquire_owned();
+        Box::pin(async move {
+            let permit = permit.map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::ConnectionRefused,
+                    "concurrent connection limit reached",
+                )
+            })?;
+            Ok((
+                LimitedTcpStream {
+                    stream,
+                    _permit: permit,
+                },
+                service,
+            ))
+        })
+    }
+}
 
 struct RequestRateWindow {
     started: tokio::time::Instant,
@@ -2538,10 +2618,20 @@ pub async fn serve_tls(
     key_path: &FsPath,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tls = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert_path, key_path).await?;
-    axum_server::bind_rustls(bind, tls)
-        .serve(router(state).into_make_service())
-        .await?;
+    tls_server(state, bind, tls).await?;
     Ok(())
+}
+
+pub fn tls_server(
+    state: AppState,
+    bind: SocketAddr,
+    tls: axum_server::tls_rustls::RustlsConfig,
+) -> impl Future<Output = io::Result<()>> + Send + 'static {
+    axum_server::bind_rustls(bind, tls)
+        .map(|acceptor| {
+            acceptor.acceptor(ConnectionLimitAcceptor::new(MAX_CONCURRENT_API_CONNECTIONS))
+        })
+        .serve(router(state).into_make_service())
 }
 
 #[cfg(test)]
@@ -2549,6 +2639,45 @@ mod tests {
     use super::*;
 
     static MPRIS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    #[tokio::test]
+    async fn connection_limiter_rejects_excess_sockets_until_a_connection_closes() {
+        use axum_server::accept::Accept;
+        use tokio::net::{TcpListener, TcpStream};
+
+        async fn accepted_stream(listener: &TcpListener) -> TcpStream {
+            let client = TcpStream::connect(listener.local_addr().unwrap())
+                .await
+                .unwrap();
+            let (server, _) = listener.accept().await.unwrap();
+            drop(client);
+            server
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let limiter = ConnectionLimitAcceptor::new(2);
+        let first = limiter
+            .accept(accepted_stream(&listener).await, ())
+            .await
+            .unwrap();
+        let _second = limiter
+            .accept(accepted_stream(&listener).await, ())
+            .await
+            .unwrap();
+        let error = match limiter.accept(accepted_stream(&listener).await, ()).await {
+            Ok(_) => panic!("the connection limit must reject an excess socket"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::ConnectionRefused);
+
+        drop(first);
+        assert!(
+            limiter
+                .accept(accepted_stream(&listener).await, ())
+                .await
+                .is_ok()
+        );
+    }
 
     #[tokio::test]
     async fn allowlisted_process_output_is_bounded() {
