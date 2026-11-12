@@ -1,4 +1,4 @@
-# WayControl (UNREADY!!!)
+# WayControl
 
 *Your desktop. Your control.*
 
