@@ -27,4 +27,26 @@ class ReconnectBackoffTest {
 
         assertEquals(1_000L, backoff.nextDelayMillis())
     }
+
+    @Test
+    fun shortLivedEventConnectionsDoNotResetRetryDelay() {
+        val backoff = ReconnectBackoff()
+        backoff.nextDelayMillis()
+        backoff.nextDelayMillis()
+
+        backoff.resetAfterStableConnection(29_999)
+
+        assertEquals(4_000L, backoff.nextDelayMillis())
+    }
+
+    @Test
+    fun stableEventConnectionResetsRetryDelay() {
+        val backoff = ReconnectBackoff()
+        backoff.nextDelayMillis()
+        backoff.nextDelayMillis()
+
+        backoff.resetAfterStableConnection(30_000)
+
+        assertEquals(1_000L, backoff.nextDelayMillis())
+    }
 }

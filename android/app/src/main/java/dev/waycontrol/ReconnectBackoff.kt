@@ -24,4 +24,13 @@ internal class ReconnectBackoff(
     fun reset() {
         nextDelayMillis = initialDelayMillis
     }
+
+    fun resetAfterStableConnection(durationMillis: Long) {
+        require(durationMillis >= 0)
+        if (durationMillis >= STABLE_CONNECTION_MILLIS) reset()
+    }
+
+    private companion object {
+        const val STABLE_CONNECTION_MILLIS = 30_000L
+    }
 }

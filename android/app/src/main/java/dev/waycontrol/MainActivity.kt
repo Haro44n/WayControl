@@ -332,24 +332,30 @@ internal fun WayControlApp(store: SecureConnectionStore) {
         val savedToken = token ?: return@LaunchedEffect
         if (endpoint.isBlank() || pin.isBlank() || !capabilities.events) return@LaunchedEffect
         val backoff = ReconnectBackoff()
-        suspend fun subscribe() {
+        suspend fun subscribe(onConnected: () -> Unit) {
             val parentContext = currentCoroutineContext()
             withContext(Dispatchers.IO) {
                 WayControlClient(endpoint, pin, savedToken).readEvents(
                     shouldStop = { !parentContext.isActive },
-                    onConnected = { backoff.reset() },
+                    onConnected = onConnected,
                     onEvent = { scope.launch { eventCounter = (eventCounter + 1) % 100_000 } },
                 )
             }
         }
         suspend fun maintainEventSubscription() {
             while (true) {
+                var connectedAtMillis: Long? = null
                 try {
-                    subscribe()
+                    subscribe { connectedAtMillis = System.nanoTime() / 1_000_000L }
                 } catch (exception: CancellationException) {
                     throw exception
                 } catch (_: Exception) {
                     // Retry below with a bounded delay while preserving cancellation.
+                } finally {
+                    connectedAtMillis?.let { connectedAt ->
+                        val durationMillis = (System.nanoTime() / 1_000_000L - connectedAt).coerceAtLeast(0)
+                        backoff.resetAfterStableConnection(durationMillis)
+                    }
                 }
                 delay(backoff.nextDelayMillis())
             }
