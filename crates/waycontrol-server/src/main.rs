@@ -22,6 +22,9 @@ use waycontrol_server::{
     run_lan_discovery, socket_address_from_env,
 };
 
+const MAX_ADMIN_REQUEST_BYTES: usize = 8192;
+const ADMIN_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
@@ -321,12 +324,13 @@ async fn admin_loop(
 ) -> Result<(), Box<dyn std::error::Error>> {
     loop {
         let (mut stream, _) = listener.accept().await?;
-        let mut input = vec![0u8; 8192];
-        let size = stream.read(&mut input).await?;
-        if size == 0 {
-            continue;
-        }
-        let response = match serde_json::from_slice::<AdminRequest>(&input[..size]) {
+        let input = match read_admin_payload(&mut stream).await {
+            Ok(Some(input)) => input,
+            Ok(None) | Err(_) => {
+                continue;
+            }
+        };
+        let response = match serde_json::from_slice::<AdminRequest>(&input) {
             Ok(request) => {
                 let mut response = admin_command(&state, request).await;
                 response.server_address = Some(address.clone());
@@ -347,6 +351,51 @@ async fn admin_loop(
         bytes.push(b'\n');
         stream.write_all(&bytes).await?;
     }
+}
+
+async fn read_admin_payload<R>(reader: &mut R) -> io::Result<Option<Vec<u8>>>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    tokio::time::timeout(ADMIN_REQUEST_TIMEOUT, async {
+        let mut input = Vec::with_capacity(512);
+        let mut buffer = [0_u8; 1024];
+        loop {
+            let size = reader.read(&mut buffer).await?;
+            if size == 0 {
+                return if input.is_empty() {
+                    Ok(None)
+                } else {
+                    Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "admin request ended before its newline",
+                    ))
+                };
+            }
+            if input.len().saturating_add(size) > MAX_ADMIN_REQUEST_BYTES {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "admin request exceeds its size limit",
+                ));
+            }
+            if let Some(newline) = buffer[..size].iter().position(|byte| *byte == b'\n') {
+                if buffer[newline + 1..size]
+                    .iter()
+                    .any(|byte| !byte.is_ascii_whitespace())
+                {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "admin connection contains data after its request",
+                    ));
+                }
+                input.extend_from_slice(&buffer[..=newline]);
+                return Ok(Some(input));
+            }
+            input.extend_from_slice(&buffer[..size]);
+        }
+    })
+    .await
+    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "admin request timed out"))?
 }
 
 fn bind_admin_socket(path: &std::path::Path) -> Result<UnixListener, Box<dyn std::error::Error>> {
@@ -392,8 +441,46 @@ fn admin_socket_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{pairing_qr_payload, render_qr, resolve_data_dir};
+    use super::{pairing_qr_payload, read_admin_payload, render_qr, resolve_data_dir};
     use std::fs;
+
+    #[tokio::test]
+    async fn idle_admin_client_times_out_without_a_request() {
+        let (_client, mut server) = tokio::io::duplex(16);
+
+        let result = read_admin_payload(&mut server).await;
+
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    #[tokio::test]
+    async fn admin_request_reader_collects_fragmented_newline_terminated_json() {
+        let (mut client, mut server) = tokio::io::duplex(4);
+        let writer = tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            client.write_all(b"{\"action\":").await.unwrap();
+            client.write_all(b"\"pending\"}\n").await.unwrap();
+        });
+
+        let payload = read_admin_payload(&mut server).await.unwrap().unwrap();
+        writer.await.unwrap();
+
+        assert_eq!(payload, b"{\"action\":\"pending\"}\n");
+    }
+
+    #[tokio::test]
+    async fn admin_request_reader_rejects_payloads_over_its_limit() {
+        let (mut client, mut server) = tokio::io::duplex(8192);
+        let writer = tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            client.write_all(&vec![b'a'; 8193]).await.unwrap();
+        });
+
+        let error = read_admin_payload(&mut server).await.unwrap_err();
+        writer.await.unwrap();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
 
     #[test]
     fn migrates_existing_hyprcontrol_data_directory_without_losing_credentials() {

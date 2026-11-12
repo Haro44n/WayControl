@@ -9,6 +9,7 @@
 - Remote actions are represented by typed protocol operations and validated identifiers. No arbitrary command or shell operation is exposed. System actions use fixed executable names and argument allowlists; closing windows, powering off monitors, and system power actions require Android confirmation.
 - The authenticated Hyprland event stream is bounded to four concurrent clients and limits event lines to 8 KiB.
 - Local approval, listing, and revocation use a mode-0600 Unix socket in the user's runtime directory. The server binds to loopback by default.
+- Local admin requests are newline-delimited, capped at 8 KiB, and have a two-second read deadline so an idle same-user socket client cannot hold the admin loop indefinitely.
 
 ## Remaining security work
 
