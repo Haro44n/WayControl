@@ -6,7 +6,8 @@ cd "$script_dir/../android"
 
 ./gradlew connectedDebugAndroidTest
 
-if adb shell pm list packages --user 0 | tr -d '\r' | grep -Fxq 'package:dev.waycontrol'; then
+installed_packages="$(adb shell pm list packages --user 0 | tr -d '\r')"
+if grep -Fxq 'package:dev.waycontrol' <<<"$installed_packages"; then
   adb shell am force-stop dev.waycontrol
   adb shell pm uninstall --user 0 dev.waycontrol
 fi
@@ -15,7 +16,7 @@ adb install app/build/outputs/apk/release/app-release.apk
 adb shell monkey -p dev.waycontrol -c android.intent.category.LAUNCHER 1
 
 for attempt in $(seq 1 20); do
-  app_pid="$(adb shell pidof dev.waycontrol | tr -d '\r')"
+  app_pid="$(adb shell pidof dev.waycontrol 2>/dev/null | tr -d '\r' || true)"
   if [ -n "$app_pid" ]; then
     echo "Signed minified release app running with PID $app_pid"
     exit 0
