@@ -79,6 +79,18 @@ jobs:
       - run: sdkmanager --channel=3 "platforms;android-37.0" "build-tools;37.0.0"
       - run: ./gradlew testDebugUnitTest lintDebug assembleDebug assembleRelease
         working-directory: android
+      - name: Verify signed release variant with an ephemeral CI key
+        working-directory: android
+        env:
+          WAYCONTROL_RELEASE_STORE_FILE: ${{ runner.temp }}/waycontrol-ci-release.jks
+          WAYCONTROL_RELEASE_KEY_ALIAS: waycontrol-ci
+        run: |
+          ci_password="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+          export WAYCONTROL_RELEASE_STORE_PASSWORD="$ci_password"
+          export WAYCONTROL_RELEASE_KEY_PASSWORD="$ci_password"
+          keytool -genkeypair -keystore "$WAYCONTROL_RELEASE_STORE_FILE" -storepass "$WAYCONTROL_RELEASE_STORE_PASSWORD" -keypass "$WAYCONTROL_RELEASE_KEY_PASSWORD" -alias "$WAYCONTROL_RELEASE_KEY_ALIAS" -keyalg RSA -keysize 3072 -validity 365 -dname "CN=WayControl CI, OU=Build Verification, O=WayControl, C=US"
+          ./gradlew clean assembleRelease
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose --print-certs app/build/outputs/apk/release/app-release.apk
       - name: Enable KVM for Android emulator tests
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
