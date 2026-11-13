@@ -370,6 +370,9 @@ impl CompositorBackend for SwayAdapter {
         CompositorInfo::detected(CompositorKind::Sway)
     }
     fn capabilities(&self) -> CompositorCapabilities {
+        if self.socket.is_none() {
+            return CompositorCapabilities::none();
+        }
         CompositorCapabilities {
             workspaces: true,
             switch_workspace: true,
@@ -942,8 +945,17 @@ mod tests {
     }
 
     #[test]
-    fn sway_advertises_monitor_power_and_cross_output_move() {
+    fn sway_without_a_live_socket_reports_no_compositor_capabilities() {
         let capabilities = SwayAdapter { socket: None }.capabilities();
+        assert_eq!(capabilities, CompositorCapabilities::none());
+    }
+
+    #[test]
+    fn configured_sway_adapter_advertises_monitor_power_and_cross_output_move() {
+        let capabilities = SwayAdapter {
+            socket: Some(PathBuf::from("/run/user/1000/sway-ipc.sock")),
+        }
+        .capabilities();
         assert!(capabilities.monitor_power);
         assert!(capabilities.move_window_to_monitor);
     }

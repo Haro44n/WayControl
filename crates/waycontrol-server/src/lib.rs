@@ -3311,11 +3311,6 @@ mod tests {
         let backend = WaylandBackend::for_kind(CompositorKind::Sway);
         assert_eq!(backend.info().id, "sway");
         assert_eq!(backend.info().name, "Sway");
-        assert!(backend.capabilities().workspaces);
-        assert!(backend.capabilities().windows);
-        assert!(backend.capabilities().move_window_to_monitor);
-        assert!(backend.capabilities().monitor_power);
-        assert!(!backend.capabilities().lock_screen);
         assert!(
             backend
                 .workspaces()
@@ -3329,11 +3324,6 @@ mod tests {
     async fn detected_niri_uses_its_adapter_and_only_advertises_supported_features() {
         let backend = WaylandBackend::for_kind(CompositorKind::Niri);
         assert_eq!(backend.info().id, "niri");
-        assert!(backend.capabilities().workspaces);
-        assert!(backend.capabilities().windows);
-        assert!(backend.capabilities().events);
-        assert!(!backend.capabilities().toggle_fullscreen);
-        assert!(!backend.capabilities().monitor_power);
         assert!(
             backend
                 .workspaces()

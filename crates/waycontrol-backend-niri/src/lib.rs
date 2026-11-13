@@ -248,6 +248,9 @@ impl CompositorBackend for NiriAdapter {
     }
 
     fn capabilities(&self) -> CompositorCapabilities {
+        if self.socket.is_none() {
+            return CompositorCapabilities::none();
+        }
         CompositorCapabilities {
             workspaces: true,
             switch_workspace: true,
@@ -349,6 +352,26 @@ mod tests {
     };
 
     static NEXT_SOCKET: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn niri_without_a_socket_reports_no_compositor_capabilities() {
+        let capabilities = NiriAdapter { socket: None }.capabilities();
+        assert_eq!(capabilities, CompositorCapabilities::none());
+    }
+
+    #[test]
+    fn configured_niri_adapter_advertises_implemented_workspace_and_window_actions() {
+        let capabilities = NiriAdapter {
+            socket: Some(PathBuf::from("/run/user/1000/niri.sock")),
+        }
+        .capabilities();
+        assert!(capabilities.workspaces);
+        assert!(capabilities.switch_workspace);
+        assert!(capabilities.windows);
+        assert!(capabilities.move_window);
+        assert!(!capabilities.toggle_fullscreen);
+        assert!(!capabilities.monitor_power);
+    }
 
     #[tokio::test]
     #[ignore = "requires a live Niri compositor and WAYCONTROL_TEST_LIVE_NIRI=1"]
