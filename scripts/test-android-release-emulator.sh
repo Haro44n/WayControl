@@ -166,7 +166,9 @@ print(f"Captured WayControl Android screen: {width}x{height}, {len(image)} bytes
 PY
       }
 
-      sleep 2
+      # Let the first-run route load and its bounded LAN discovery finish so
+      # the uploaded onboarding screenshot shows the settled empty state.
+      sleep 5
       capture_screenshot "$WAYCONTROL_SCREENSHOT_PATH"
 
       # The pixel_2 CI profile is 1080x1920; this is the center of the
