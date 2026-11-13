@@ -14,6 +14,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.json.JSONArray
 import org.json.JSONObject
@@ -59,6 +60,36 @@ class HomeQuickWorkspaceSwitchTest {
         }
 
         composeRule.onNodeWithText("Code").performScrollTo().assertIsNotEnabled()
+    }
+
+    @Test
+    fun workspaceScreenAcceptsAnIdAndDispatchesSwitch() {
+        var selectedId: String? = null
+        composeRule.setContent {
+            MaterialTheme {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    WorkspaceScreen(JSONArray(), "Connected", true) { selectedId = it }
+                }
+            }
+        }
+
+        composeRule.onNodeWithText("Workspace ID").performTextInput(" dev-workspace ")
+        composeRule.onNodeWithText("Go to workspace").performClick()
+        composeRule.runOnIdle { assertEquals("dev-workspace", selectedId) }
+    }
+
+    @Test
+    fun workspaceNavigationEntryIsHiddenWithoutSwitchCapability() {
+        composeRule.setContent {
+            MaterialTheme {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    WorkspaceScreen(JSONArray(), "Read only", false) { }
+                }
+            }
+        }
+
+        composeRule.onAllNodesWithText("Go to workspace").assertCountEquals(0)
+        composeRule.onAllNodesWithText("Workspace ID").assertCountEquals(0)
     }
 
     @Test

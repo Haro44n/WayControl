@@ -690,8 +690,23 @@ private fun HomeQuickActions(
     }
 }
 
-@Composable private fun WorkspaceScreen(items: JSONArray, status: String, canSwitch: Boolean, switch: (String) -> Unit) {
+@Composable internal fun WorkspaceScreen(items: JSONArray, status: String, canSwitch: Boolean, switch: (String) -> Unit) {
     Header("Workspaces", status)
+    var workspaceId by rememberSaveable { mutableStateOf("") }
+    if (canSwitch) {
+        OutlinedTextField(
+            value = workspaceId,
+            onValueChange = { workspaceId = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Workspace ID") },
+            placeholder = { Text("Enter a workspace ID") },
+            singleLine = true,
+        )
+        Button(
+            onClick = { switch(workspaceId.trim()); workspaceId = "" },
+            enabled = workspaceId.isNotBlank(),
+        ) { Text("Go to workspace") }
+    }
     if (items.length() == 0) Empty("No workspace data", status)
     for (i in 0 until items.length()) {
         val item = items.optJSONObject(i) ?: continue
