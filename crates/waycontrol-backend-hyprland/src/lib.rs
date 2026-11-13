@@ -72,7 +72,7 @@ impl HyprlandAdapter {
                 .capabilities
                 .write()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = capabilities;
-            true
+            events_available
         } else {
             *self
                 .capabilities
@@ -88,7 +88,7 @@ impl HyprlandAdapter {
         let adapter = self.clone();
         tokio::spawn(async move {
             loop {
-                if adapter.capabilities().workspaces || adapter.negotiate_capabilities().await {
+                if adapter.negotiate_capabilities().await {
                     break;
                 }
                 tokio::time::sleep(Duration::from_secs(2)).await;
@@ -100,7 +100,7 @@ impl HyprlandAdapter {
         if let Some(client) = self
             .client
             .as_ref()
-            .filter(|client| client.has_ipc_sockets())
+            .filter(|client| client.has_control_socket())
         {
             return Ok(client.clone());
         }
@@ -235,11 +235,15 @@ mod tests {
         net::UnixListener,
     };
 
-    fn start_mock_hyprland_ipc(socket_dir: &Path) -> (tokio::task::JoinHandle<()>, UnixListener) {
+    fn start_mock_hyprland_ipc(
+        socket_dir: &Path,
+        with_events: bool,
+    ) -> (tokio::task::JoinHandle<()>, Option<UnixListener>) {
         let ipc = UnixListener::bind(socket_dir.join(".socket.sock")).unwrap();
-        let events = UnixListener::bind(socket_dir.join(".socket2.sock")).unwrap();
+        let events =
+            with_events.then(|| UnixListener::bind(socket_dir.join(".socket2.sock")).unwrap());
         let ipc_task = tokio::spawn(async move {
-            for _ in 0..10 {
+            loop {
                 let (mut stream, _) = ipc.accept().await.unwrap();
                 let mut request = [0_u8; 64];
                 let size = stream.read(&mut request).await.unwrap();
@@ -305,7 +309,7 @@ mod tests {
             std::process::id()
         ));
         std::fs::create_dir(&socket_dir).unwrap();
-        let (ipc_task, events) = start_mock_hyprland_ipc(&socket_dir);
+        let (ipc_task, events) = start_mock_hyprland_ipc(&socket_dir, true);
         let backend = HyprlandAdapter {
             client: Some(HyprlandClient::at_socket_dir(socket_dir.clone())),
             version: Arc::new(OnceLock::new()),
@@ -318,7 +322,7 @@ mod tests {
         assert!(capabilities.windows);
         assert!(capabilities.monitor_power);
         assert!(capabilities.events);
-        ipc_task.await.unwrap();
+        ipc_task.abort();
         drop(events);
         std::fs::remove_dir_all(socket_dir).unwrap();
     }
@@ -350,7 +354,7 @@ mod tests {
 
         std::fs::remove_file(socket_dir.join(".socket.sock")).unwrap();
         std::fs::remove_file(socket_dir.join(".socket2.sock")).unwrap();
-        let (ipc_task, events) = start_mock_hyprland_ipc(&socket_dir);
+        let (ipc_task, events) = start_mock_hyprland_ipc(&socket_dir, true);
         tokio::time::timeout(Duration::from_secs(4), async {
             while !backend.capabilities().workspaces {
                 tokio::time::sleep(Duration::from_millis(20)).await;
@@ -359,7 +363,45 @@ mod tests {
         .await
         .expect("background negotiation should discover the late IPC server");
         assert!(backend.capabilities().events);
-        ipc_task.await.unwrap();
+        ipc_task.abort();
+        drop(events);
+        std::fs::remove_dir_all(socket_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn late_event_socket_is_retried_after_control_ipc_becomes_ready() {
+        let unique = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let socket_dir = std::env::temp_dir().join(format!(
+            "waycontrol-hyprland-late-events-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&socket_dir).unwrap();
+        let (ipc_task, _) = start_mock_hyprland_ipc(&socket_dir, false);
+        let backend = HyprlandAdapter {
+            client: Some(HyprlandClient::at_socket_dir(socket_dir.clone())),
+            version: Arc::new(OnceLock::new()),
+            capabilities: Arc::new(RwLock::new(CompositorCapabilities::none())),
+        };
+
+        assert!(!backend.negotiate_capabilities().await);
+        assert!(backend.capabilities().workspaces);
+        assert!(!backend.capabilities().events);
+        backend.retry_negotiation_until_ready();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!backend.capabilities().events);
+        let events = UnixListener::bind(socket_dir.join(".socket2.sock")).unwrap();
+        tokio::time::timeout(Duration::from_secs(4), async {
+            while !backend.capabilities().events {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("background negotiation should discover the late event socket");
+
+        ipc_task.abort();
         drop(events);
         std::fs::remove_dir_all(socket_dir).unwrap();
     }

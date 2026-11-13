@@ -117,7 +117,13 @@ impl HyprlandClient {
     }
 
     pub fn has_ipc_sockets(&self) -> bool {
-        has_ipc_sockets(&self.socket_dir)
+        self.has_control_socket() && self.has_event_socket()
+    }
+    pub fn has_control_socket(&self) -> bool {
+        has_socket(&self.socket_dir, ".socket.sock")
+    }
+    pub fn has_event_socket(&self) -> bool {
+        has_socket(&self.socket_dir, ".socket2.sock")
     }
     pub fn at_socket_dir(socket_dir: PathBuf) -> Self {
         Self { socket_dir }
@@ -510,10 +516,14 @@ fn parse_hyprland_version(response: &str) -> Result<String, HyprlandError> {
 }
 
 fn has_ipc_sockets(path: &FsPath) -> bool {
-    [".socket.sock", ".socket2.sock"].iter().all(|name| {
-        std::fs::symlink_metadata(path.join(name))
-            .is_ok_and(|metadata| metadata.file_type().is_socket())
-    })
+    [".socket.sock", ".socket2.sock"]
+        .iter()
+        .all(|name| has_socket(path, name))
+}
+
+fn has_socket(path: &FsPath, name: &str) -> bool {
+    std::fs::symlink_metadata(path.join(name))
+        .is_ok_and(|metadata| metadata.file_type().is_socket())
 }
 
 fn valid_window_address(address: &str) -> bool {
