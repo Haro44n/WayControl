@@ -17,6 +17,18 @@ pub struct KWinAdapter {
 }
 
 impl KWinAdapter {
+    /// Connect to the session bus and verify KWin's virtual desktop API before advertising it.
+    pub async fn connect() -> Result<Self, String> {
+        let connection = Connection::session()
+            .await
+            .map_err(|error| format!("could not connect to the session D-Bus: {error}"))?;
+        let adapter = Self {
+            connection: Some(connection),
+        };
+        adapter.workspaces().await?;
+        Ok(adapter)
+    }
+
     #[cfg(test)]
     fn with_connection(connection: Connection) -> Self {
         Self {
@@ -86,6 +98,9 @@ impl CompositorBackend for KWinAdapter {
     }
 
     fn capabilities(&self) -> CompositorCapabilities {
+        if self.connection.is_none() {
+            return CompositorCapabilities::none();
+        }
         CompositorCapabilities {
             workspaces: true,
             switch_workspace: true,
@@ -388,8 +403,12 @@ mod tests {
             .build()
             .await
             .unwrap();
-        let client = Connection::session().await.unwrap();
-        let adapter = KWinAdapter::with_connection(client);
+        let adapter = KWinAdapter::connect().await.unwrap();
+        assert!(adapter.capabilities().workspaces);
+        assert!(adapter.capabilities().switch_workspace);
+        assert!(adapter.capabilities().events);
+        assert!(!adapter.capabilities().windows);
+        assert!(!adapter.capabilities().monitor_power);
 
         let workspaces = adapter.workspaces().await.unwrap();
         assert_eq!(workspaces.len(), 2);

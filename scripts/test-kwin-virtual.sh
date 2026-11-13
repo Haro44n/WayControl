@@ -60,5 +60,9 @@ if [[ "$ready" != true ]]; then
     exit 1
 fi
 
+XDG_CURRENT_DESKTOP=KDE XDG_SESSION_DESKTOP=KDE XDG_SESSION_TYPE=wayland \
+    cargo run --quiet --locked -p waycontrol-server -- inspect \
+    | python3 -c 'import json,sys; report=json.load(sys.stdin); assert report["compositor"]["id"] == "kde_kwin"; assert report["capabilities"]["workspaces"] is True; assert report["state"]["available"] is True'
+
 WAYCONTROL_TEST_LIVE_KWIN=1 cargo test -p waycontrol-backend-kwin \
     live_kwin_lists_switches_and_streams_virtual_desktops -- --ignored --nocapture

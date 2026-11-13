@@ -563,6 +563,13 @@ impl WaylandBackend {
         if kind == CompositorKind::Sway {
             return Self::Sway(SwayAdapter::from_env_or_discover().await);
         }
+        if kind == CompositorKind::KdeKWin {
+            return match tokio::time::timeout(Duration::from_secs(2), KWinAdapter::connect()).await
+            {
+                Ok(Ok(adapter)) => Self::KWin(adapter),
+                Ok(Err(_)) | Err(_) => Self::Unsupported(CompositorInfo::detected(kind)),
+            };
+        }
         if kind == CompositorKind::Unknown
             && !discovered_hyprland
             && let Some(adapter) = SwayAdapter::discover_active_session().await
@@ -3334,14 +3341,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn kwin_exposes_only_workspace_operations_and_gnome_needs_an_enabled_bridge() {
+    async fn unnegotiated_kwin_exposes_no_compositor_operations_and_gnome_needs_an_enabled_bridge()
+    {
         let kwin = WaylandBackend::for_kind(CompositorKind::KdeKWin);
         assert_eq!(kwin.info().id, "kde_kwin");
-        assert!(kwin.capabilities().workspaces);
-        assert!(kwin.capabilities().switch_workspace);
-        assert!(kwin.capabilities().events);
-        assert!(!kwin.capabilities().windows);
-        assert!(!kwin.capabilities().monitor_power);
+        assert_eq!(kwin.capabilities(), CompositorCapabilities::none());
 
         let gnome = WaylandBackend::for_kind(CompositorKind::Gnome);
         assert_eq!(gnome.info().id, "gnome");
