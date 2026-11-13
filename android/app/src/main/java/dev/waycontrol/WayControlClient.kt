@@ -7,6 +7,7 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.io.PushbackReader
 import java.net.URL
 import java.net.URI
 import java.security.KeyStore
@@ -115,16 +116,19 @@ class WayControlClient(baseUrl: String, fingerprint: String, private val token: 
         try {
             if (connection.responseCode != 200) error("Event subscription failed: HTTP ${connection.responseCode}")
             onConnected()
-            connection.inputStream.bufferedReader().use { reader ->
+            PushbackReader(connection.inputStream.bufferedReader(), 1).use { reader ->
                 val data = StringBuilder()
                 while (!shouldStop()) {
-                    val line = reader.readLine() ?: return
+                    val line = readBoundedSseLine(reader, MAX_SSE_LINE_CHARS) ?: return
                     if (line.startsWith("data:")) {
-                        if (data.isNotEmpty()) data.append('\n')
-                        data.append(line.removePrefix("data:").trimStart())
+                        appendBoundedSseDataLine(
+                            data,
+                            line.removePrefix("data:").trimStart(),
+                            MAX_SSE_EVENT_CHARS,
+                        )
                     } else if (line.isEmpty() && data.isNotEmpty()) {
                         onEvent(data.toString())
-                        data.clear()
+                        data.setLength(0)
                     }
                 }
             }
