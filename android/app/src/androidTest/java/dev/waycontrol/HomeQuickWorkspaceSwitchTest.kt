@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
@@ -90,6 +91,43 @@ class HomeQuickWorkspaceSwitchTest {
 
         composeRule.onAllNodesWithText("Go to workspace").assertCountEquals(0)
         composeRule.onAllNodesWithText("Workspace ID").assertCountEquals(0)
+    }
+
+    @Test
+    fun workspaceSwitchControlsStayUnavailableAfterDisconnect() {
+        composeRule.setContent {
+            MaterialTheme {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    WorkspaceScreen(workspaces(), "Disconnected", true) { }
+                }
+            }
+        }
+
+        composeRule.onNodeWithText("Connect to switch workspaces").performScrollTo().assertIsDisplayed()
+        composeRule.onAllNodesWithText("Workspace ID").assertCountEquals(0)
+        composeRule.onAllNodesWithText("Go to workspace").assertCountEquals(0)
+        composeRule.onNodeWithText("Code").performScrollTo().assertHasNoClickAction()
+    }
+
+    @Test
+    fun windowActionsStayUnavailableAfterDisconnect() {
+        val window = JSONObject()
+            .put("address", "0x1")
+            .put("title", "Editor")
+            .put("app_id", "editor")
+            .put("workspace_id", "ws-code")
+        val capabilities = CompositorCapabilities(focusWindow = true, closeWindow = true)
+        composeRule.setContent {
+            MaterialTheme {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    WindowScreen(JSONArray().put(window), workspaces(), JSONArray(), "Disconnected", capabilities) { _, _, _ -> }
+                }
+            }
+        }
+
+        composeRule.onNodeWithText("Connect to manage windows").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Focus").assertCountEquals(0)
+        composeRule.onAllNodesWithText("Close").assertCountEquals(0)
     }
 
     @Test

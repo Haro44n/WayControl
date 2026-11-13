@@ -204,6 +204,18 @@ internal fun WayControlApp(store: SecureConnectionStore) {
         }
     }
 
+    fun sendDesktopAction(operation: String, payload: JSONObject) {
+        if (!homeActionsEnabled(status)) return
+        val savedToken = token ?: return
+        scope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    WayControlClient(endpoint, pin, savedToken).request(operation, payload)
+                }
+            }.onFailure { error = it.message }
+        }
+    }
+
     LaunchedEffect(destinations, selected) {
         if (selected !in destinations) selected = Destination.Home
     }
@@ -398,20 +410,18 @@ internal fun WayControlApp(store: SecureConnectionStore) {
                         status, loading, error, snapshot.desktop, snapshot.workspaces, snapshot.windows,
                         snapshot.networkLatencyMs, capabilities.switchWorkspace, capabilities,
                         snapshot.monitors, snapshot.audio, snapshot.media,
-                        action = { operation, payload ->
-                            scope.launch { runCatching { withContext(Dispatchers.IO) { WayControlClient(endpoint, pin, token).request(operation, payload) } }.onFailure { error = it.message } }
-                        },
+                        action = ::sendDesktopAction,
                     ) { id ->
-                        scope.launch { runCatching { withContext(Dispatchers.IO) { WayControlClient(endpoint, pin, token).request("workspace.switch", JSONObject().put("workspace_id", id)) } }.onFailure { error = it.message } }
+                        sendDesktopAction("workspace.switch", JSONObject().put("workspace_id", id))
                     }
                     Destination.Workspaces -> WorkspaceScreen(snapshot.workspaces, status, capabilities.switchWorkspace) { id ->
-                        scope.launch { runCatching { withContext(Dispatchers.IO) { WayControlClient(endpoint, pin, token).request("workspace.switch", JSONObject().put("workspace_id", id)) } }.onFailure { error = it.message } }
+                        sendDesktopAction("workspace.switch", JSONObject().put("workspace_id", id))
                     }
                     Destination.Windows -> WindowScreen(snapshot.windows, snapshot.workspaces, snapshot.monitors, status, capabilities) { operation, address, payload ->
-                        scope.launch { runCatching { withContext(Dispatchers.IO) { WayControlClient(endpoint, pin, token).request(operation, payload.put("address", address)) } }.onFailure { error = it.message } }
+                        sendDesktopAction(operation, payload.put("address", address))
                     }
                     Destination.System -> SystemScreenWithHistory(snapshot.desktop, snapshot.monitors, status, capabilities, snapshot.audio, snapshot.media, telemetryHistory, mediaArtwork) { operation, payload ->
-                        scope.launch { runCatching { withContext(Dispatchers.IO) { WayControlClient(endpoint, pin, token).request(operation, payload) } }.onFailure { error = it.message } }
+                        sendDesktopAction(operation, payload)
                     }
                     Destination.Automation -> AutomationScreen(
                         profiles = automationProfiles,
@@ -701,7 +711,8 @@ private fun HomeQuickActions(
 @Composable internal fun WorkspaceScreen(items: JSONArray, status: String, canSwitch: Boolean, switch: (String) -> Unit) {
     Header("Workspaces", status)
     var workspaceId by rememberSaveable { mutableStateOf("") }
-    if (canSwitch) {
+    val actionsEnabled = canSwitch && homeActionsEnabled(status)
+    if (actionsEnabled) {
         OutlinedTextField(
             value = workspaceId,
             onValueChange = { workspaceId = it },
@@ -714,22 +725,25 @@ private fun HomeQuickActions(
             onClick = { switch(workspaceId.trim()); workspaceId = "" },
             enabled = workspaceId.isNotBlank(),
         ) { Text("Go to workspace") }
+    } else if (canSwitch) {
+        Card { Text("Connect to switch workspaces", color = SecondaryText) }
     }
     if (items.length() == 0) Empty("No workspace data", status)
     for (i in 0 until items.length()) {
         val item = items.optJSONObject(i) ?: continue
         val id = item.optString("id")
-        Card(if (canSwitch) Modifier.clickable { switch(id) } else Modifier) {
+        Card(if (actionsEnabled) Modifier.clickable { switch(id) } else Modifier) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Column { Text(item.optString("name", id), color = MainText, fontWeight = FontWeight.Medium); Text("${item.optLong("window_count")} windows · ${item.optString("monitor", "Monitor unavailable")}", color = SecondaryText) }
-                if (item.optBoolean("active")) Text("ACTIVE", color = Color(0xFFB9567B)) else if (canSwitch) Text("Switch", color = SecondaryText) else Text("Read only", color = SecondaryText)
+                if (item.optBoolean("active")) Text("ACTIVE", color = Color(0xFFB9567B)) else if (actionsEnabled) Text("Switch", color = SecondaryText) else Text("Read only", color = SecondaryText)
             }
         }
     }
 }
 
-@Composable private fun WindowScreen(items: JSONArray, workspaces: JSONArray, monitors: JSONArray, status: String, capabilities: CompositorCapabilities, action: (String, String, JSONObject) -> Unit) {
+@Composable internal fun WindowScreen(items: JSONArray, workspaces: JSONArray, monitors: JSONArray, status: String, capabilities: CompositorCapabilities, action: (String, String, JSONObject) -> Unit) {
     Header("Windows", status)
+    val actionsEnabled = homeActionsEnabled(status)
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var groupingName by rememberSaveable { mutableStateOf(WindowGrouping.WORKSPACE.name) }
     val grouping = if (groupingName == WindowGrouping.MONITOR.name) WindowGrouping.MONITOR else WindowGrouping.WORKSPACE
@@ -757,6 +771,7 @@ private fun HomeQuickActions(
             )
         }
     }
+    if (!actionsEnabled) Card { Text("Connect to manage windows", color = SecondaryText) }
     val groups = groupFilteredWindows(items, workspaces, searchQuery, grouping)
     if (items.length() == 0) Empty("No open windows", status)
     else if (groups.isEmpty()) Empty("No matching windows", status)
@@ -791,15 +806,15 @@ private fun HomeQuickActions(
                     Text("workspace ${item.optString("workspace_id", "—")} · $monitorName", color = SecondaryText)
                     if (item.optBoolean("focused")) Text("FOCUSED", color = Color(0xFFB9567B), style = MaterialTheme.typography.labelSmall)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (capabilities.focusWindow) Button(onClick = { action("window.focus", address, JSONObject()) }) { Text("Focus") }
-                        if (capabilities.toggleFloating) Button(onClick = { action("window.toggle_floating", address, JSONObject()) }) { Text(if (item.optBoolean("floating")) "Tile" else "Float") }
-                        if (capabilities.toggleFullscreen) Button(onClick = { action("window.toggle_fullscreen", address, JSONObject()) }) { Text(if (item.optBoolean("fullscreen")) "Exit full screen" else "Full screen") }
+                        if (actionsEnabled && capabilities.focusWindow) Button(onClick = { action("window.focus", address, JSONObject()) }) { Text("Focus") }
+                        if (actionsEnabled && capabilities.toggleFloating) Button(onClick = { action("window.toggle_floating", address, JSONObject()) }) { Text(if (item.optBoolean("floating")) "Tile" else "Float") }
+                        if (actionsEnabled && capabilities.toggleFullscreen) Button(onClick = { action("window.toggle_fullscreen", address, JSONObject()) }) { Text(if (item.optBoolean("fullscreen")) "Exit full screen" else "Full screen") }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (capabilities.togglePinned && item.optBoolean("floating") && item.has("pinned") && !item.isNull("pinned")) Button(onClick = { action("window.toggle_pinned", address, JSONObject()) }) { Text(if (item.optBoolean("pinned")) "Unpin" else "Pin") }
-                        if (capabilities.centerFloatingWindow && item.optBoolean("floating")) Button(onClick = { action("window.center_floating", address, JSONObject()) }) { Text("Center") }
-                        if (capabilities.moveWindow && capabilities.workspaces) Button(onClick = { menuOpen = true }) { Text("Move to workspace") }
-                        DropdownMenu(expanded = menuOpen && capabilities.moveWindow && capabilities.workspaces, onDismissRequest = { menuOpen = false }) {
+                        if (actionsEnabled && capabilities.togglePinned && item.optBoolean("floating") && item.has("pinned") && !item.isNull("pinned")) Button(onClick = { action("window.toggle_pinned", address, JSONObject()) }) { Text(if (item.optBoolean("pinned")) "Unpin" else "Pin") }
+                        if (actionsEnabled && capabilities.centerFloatingWindow && item.optBoolean("floating")) Button(onClick = { action("window.center_floating", address, JSONObject()) }) { Text("Center") }
+                        if (actionsEnabled && capabilities.moveWindow && capabilities.workspaces) Button(onClick = { menuOpen = true }) { Text("Move to workspace") }
+                        DropdownMenu(expanded = menuOpen && actionsEnabled && capabilities.moveWindow && capabilities.workspaces, onDismissRequest = { menuOpen = false }) {
                             for (w in 0 until workspaces.length()) {
                                 val workspace = workspaces.optJSONObject(w) ?: continue
                                 val id = workspace.optString("id")
@@ -811,8 +826,8 @@ private fun HomeQuickActions(
                         }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (capabilities.moveWindowToMonitor && capabilities.monitors) Button(onClick = { monitorMenuOpen = true }) { Text("Move to monitor") }
-                        DropdownMenu(expanded = monitorMenuOpen && capabilities.moveWindowToMonitor && capabilities.monitors, onDismissRequest = { monitorMenuOpen = false }) {
+                        if (actionsEnabled && capabilities.moveWindowToMonitor && capabilities.monitors) Button(onClick = { monitorMenuOpen = true }) { Text("Move to monitor") }
+                        DropdownMenu(expanded = monitorMenuOpen && actionsEnabled && capabilities.moveWindowToMonitor && capabilities.monitors, onDismissRequest = { monitorMenuOpen = false }) {
                             for (m in 0 until monitors.length()) {
                                 val monitor = monitors.optJSONObject(m) ?: continue
                                 val name = monitor.optString("name").takeIf { it.isNotBlank() } ?: continue
@@ -822,13 +837,13 @@ private fun HomeQuickActions(
                                 )
                             }
                         }
-                        if (capabilities.closeWindow) Button(onClick = { closeTarget = address }) { Text("Close") }
+                        if (actionsEnabled && capabilities.closeWindow) Button(onClick = { closeTarget = address }) { Text("Close") }
                     }
                 }
             }
         }
     }
-    closeTarget?.let { target ->
+    closeTarget?.takeIf { actionsEnabled }?.let { target ->
         AlertDialog(
             onDismissRequest = { closeTarget = null },
             title = { Text("Close this window?") },
