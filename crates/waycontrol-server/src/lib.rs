@@ -13,6 +13,7 @@ use axum::{
     routing::{get, post},
 };
 use base64::Engine as _;
+use hyper_util::rt::TokioTimer;
 use nvml_wrapper::{
     Nvml,
     enum_wrappers::device::{Clock, TemperatureSensor},
@@ -160,6 +161,7 @@ pub const MAX_API_BODY_BYTES: usize = 64 * 1024;
 const MAX_CONCURRENT_API_CONNECTIONS: usize = 64;
 const MAX_CONCURRENT_CONNECTIONS_PER_IP: usize = 16;
 const API_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const HTTP_HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn normalize_client_ip(source: IpAddr) -> IpAddr {
     match source {
@@ -2745,14 +2747,18 @@ pub fn tls_server(
     bind: SocketAddr,
     tls: axum_server::tls_rustls::RustlsConfig,
 ) -> impl Future<Output = io::Result<()>> + Send + 'static {
-    axum_server::bind_rustls(bind, tls)
-        .map(|acceptor| {
-            acceptor.acceptor(ConnectionLimitAcceptor::with_ip_limit(
-                MAX_CONCURRENT_API_CONNECTIONS,
-                MAX_CONCURRENT_CONNECTIONS_PER_IP,
-            ))
-        })
-        .serve(router(state).into_make_service_with_connect_info::<SocketAddr>())
+    let mut server = axum_server::bind_rustls(bind, tls).map(|acceptor| {
+        acceptor.acceptor(ConnectionLimitAcceptor::with_ip_limit(
+            MAX_CONCURRENT_API_CONNECTIONS,
+            MAX_CONCURRENT_CONNECTIONS_PER_IP,
+        ))
+    });
+    server
+        .http_builder()
+        .http1()
+        .timer(TokioTimer::new())
+        .header_read_timeout(HTTP_HEADER_READ_TIMEOUT);
+    server.serve(router(state).into_make_service_with_connect_info::<SocketAddr>())
 }
 
 #[cfg(test)]

@@ -119,6 +119,23 @@ def main():
             assert response.status == 200 and pair_status["status"] == "approved", pair_status
             token = pair_status["token"]
 
+            # Incomplete request headers must not keep a TLS connection open
+            # before the request reaches the API deadline middleware.
+            slow_headers = open_idle_tls(tls, port)
+            slow_headers.settimeout(12)
+            slow_headers.sendall(
+                b"GET /api/v1/desktop HTTP/1.1\r\n"
+                b"Host: 127.0.0.1\r\n"
+            )
+            try:
+                header_response = slow_headers.recv(4096)
+            except TimeoutError as error:
+                raise AssertionError("server left incomplete HTTP headers open") from error
+            assert not header_response, (
+                "server should close an incomplete-header connection without dispatching a request"
+            )
+            slow_headers.close()
+
             # A peer must not hold one of the bounded TLS slots forever by
             # declaring a large JSON body and then sending only its prefix.
             slow_body = open_idle_tls(tls, port)
@@ -258,7 +275,7 @@ def main():
             fresh.close()
             assert response.status == 200 and result["success"], "fresh connection failed after framing probe"
             print(
-                "PASS: pairing, incomplete-body timeout, 16-per-IP and 64-global connection caps "
+                "PASS: pairing, incomplete-header/body timeouts, 16-per-IP and 64-global connection caps "
                 "with recovery, "
                 "authenticated ping, and HTTP framing rejection"
             )

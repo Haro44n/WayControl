@@ -1730,6 +1730,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.3.4",
  "hex",
+ "hyper-util",
  "libc",
  "nvml-wrapper",
  "qrcodegen",

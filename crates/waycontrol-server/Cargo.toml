@@ -21,6 +21,7 @@ waycontrol-backend-kwin = { path = "../waycontrol-backend-kwin" }
 waycontrol-backend-gnome = { path = "../waycontrol-backend-gnome" }
 axum.workspace = true
 axum-server.workspace = true
+hyper-util = { version = "0.1", features = ["server-auto", "tokio"] }
 async-trait.workspace = true
 rcgen.workspace = true
 sha2.workspace = true
