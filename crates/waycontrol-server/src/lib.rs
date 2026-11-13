@@ -550,6 +550,13 @@ impl WaylandBackend {
         let kind = detect_compositor();
         let discovered_hyprland =
             kind == CompositorKind::Unknown && HyprlandAdapter::can_discover_active_session();
+        if kind == CompositorKind::Hyprland || discovered_hyprland {
+            let adapter = HyprlandAdapter::from_env_or_unavailable();
+            if !adapter.negotiate_capabilities().await {
+                adapter.retry_negotiation_until_ready();
+            }
+            return Self::Hyprland(adapter);
+        }
         if kind == CompositorKind::Gnome {
             if !gnome_wayland_session(&env) {
                 return Self::Unsupported(CompositorInfo::detected(kind));
