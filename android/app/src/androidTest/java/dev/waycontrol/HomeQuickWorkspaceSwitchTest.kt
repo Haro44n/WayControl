@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -20,6 +21,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -196,6 +198,33 @@ class HomeQuickWorkspaceSwitchTest {
         composeRule.onNodeWithText("Audio controls unavailable").assertIsDisplayed()
         composeRule.onAllNodesWithText("Volume +").assertCountEquals(0)
         composeRule.onNodeWithText("Media controls unavailable").assertIsDisplayed()
+    }
+
+    @Test
+    fun connectionStatusRemainsHorizontalBesideLongBackendError() {
+        composeRule.setContent {
+            MaterialTheme {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    HomeScreen(
+                        status = "Connected",
+                        loading = false,
+                        error = "Hyprland instance is unavailable: cannot enumerate Hyprland instances in /tmp/runtime/hypr: No such file or directory",
+                        desktop = JSONObject(),
+                        workspaces = JSONArray(),
+                        windows = JSONArray(),
+                        networkLatencyMs = null,
+                        canSwitchWorkspace = false,
+                        switchWorkspace = {},
+                    )
+                }
+            }
+        }
+
+        val status = composeRule.onNodeWithText("CONNECTED")
+        val bounds = status.getUnclippedBoundsInRoot()
+        val width = bounds.right - bounds.left
+        val height = bounds.bottom - bounds.top
+        assertTrue("Connection status should stay on one line: $bounds", width > height)
     }
 
     @Test

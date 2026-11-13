@@ -563,12 +563,18 @@ internal fun WayControlApp(store: SecureConnectionStore) {
     Header("WayControl", summary.compositor)
     Card {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(summary.computerName, color = MainText, style = MaterialTheme.typography.titleMedium)
                 Text("${summary.operatingSystem} · ${summary.compositor}", color = SecondaryText, style = MaterialTheme.typography.bodyMedium)
                 Text("${if (loading) "Refreshing" else error ?: status} · ${summary.networkLatency}", color = SecondaryText, style = MaterialTheme.typography.bodyMedium)
             }
-            Text(status.uppercase(), color = if (status == "Connected") Color(0xFF85C99A) else SecondaryText, style = MaterialTheme.typography.labelMedium)
+            Text(
+                status.uppercase(),
+                color = if (status == "Connected") Color(0xFF85C99A) else SecondaryText,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                softWrap = false,
+            )
         }
     }
     Card {
