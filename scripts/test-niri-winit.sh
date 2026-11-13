@@ -37,8 +37,9 @@ workspace "WayControlTarget"
 EOF
 
 niri validate --config "$runtime_dir/niri.kdl"
-env -u HYPRLAND_INSTANCE_SIGNATURE -u SWAYSOCK \
-    XDG_CURRENT_DESKTOP=niri XDG_SESSION_DESKTOP=niri XDG_SESSION_TYPE=wayland \
+env -u SWAYSOCK \
+    XDG_CURRENT_DESKTOP=niri XDG_SESSION_DESKTOP=Hyprland XDG_SESSION_TYPE=wayland \
+    HYPRLAND_INSTANCE_SIGNATURE=stale-instance \
     NIRI_SOCKET="$runtime_dir/missing-niri.sock" \
     cargo run --quiet --locked -p waycontrol-server -- inspect \
     | python3 -c 'import json,sys; report=json.load(sys.stdin); assert report["compositor"]["id"] == "niri"; assert not any(report["capabilities"].values()); assert report["state"]["available"] is False'
@@ -94,8 +95,9 @@ if [[ "$ready" != true ]]; then
     exit 1
 fi
 
-env -u HYPRLAND_INSTANCE_SIGNATURE -u SWAYSOCK \
-    XDG_CURRENT_DESKTOP=niri XDG_SESSION_DESKTOP=niri XDG_SESSION_TYPE=wayland \
+env -u SWAYSOCK \
+    XDG_CURRENT_DESKTOP=niri XDG_SESSION_DESKTOP=Hyprland XDG_SESSION_TYPE=wayland \
+    HYPRLAND_INSTANCE_SIGNATURE=stale-instance \
     cargo run --quiet --locked -p waycontrol-server -- inspect \
     | python3 -c 'import json,sys; report=json.load(sys.stdin); assert report["compositor"]["id"] == "niri"; assert report["capabilities"]["workspaces"] is True; assert report["capabilities"]["windows"] is True; assert report["state"]["available"] is True'
 

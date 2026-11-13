@@ -41,7 +41,8 @@ impl CompositorKind {
 }
 
 /// Detect a desktop using a captured environment, allowing deterministic tests.
-/// Socket variables are stronger evidence than the generic desktop labels.
+/// Explicit compositor names in XDG_CURRENT_DESKTOP disambiguate stale socket markers;
+/// socket variables still take precedence over generic desktop labels.
 pub fn detect_compositor_from(env: &[(String, String)]) -> CompositorKind {
     let get = |key: &str| {
         env.iter()
@@ -51,6 +52,17 @@ pub fn detect_compositor_from(env: &[(String, String)]) -> CompositorKind {
     };
     let current = get("XDG_CURRENT_DESKTOP");
     let session = get("XDG_SESSION_DESKTOP");
+    let current_desktop = current.to_ascii_lowercase();
+    let mut current_parts = current_desktop.split([':', ';']);
+    if current_parts.clone().any(|part| part == "hyprland") {
+        return CompositorKind::Hyprland;
+    }
+    if current_parts.clone().any(|part| part == "sway") {
+        return CompositorKind::Sway;
+    }
+    if current_parts.any(|part| part == "niri") {
+        return CompositorKind::Niri;
+    }
     let desktop = format!("{current}:{session}").to_ascii_lowercase();
 
     if !get("HYPRLAND_INSTANCE_SIGNATURE").is_empty()
@@ -215,6 +227,28 @@ mod tests {
         assert_eq!(
             detect_compositor_from(&env(&[("NIRI_SOCKET", "/run/user/1000/niri.sock")])),
             CompositorKind::Niri
+        );
+    }
+
+    #[test]
+    fn explicit_current_compositor_beats_a_stale_hyprland_signature() {
+        assert_eq!(
+            detect_compositor_from(&env(&[
+                ("XDG_CURRENT_DESKTOP", "niri"),
+                ("XDG_SESSION_DESKTOP", "Hyprland"),
+                ("HYPRLAND_INSTANCE_SIGNATURE", "stale-instance"),
+                ("NIRI_SOCKET", "/run/user/1000/niri.sock"),
+            ])),
+            CompositorKind::Niri
+        );
+        assert_eq!(
+            detect_compositor_from(&env(&[
+                ("XDG_CURRENT_DESKTOP", "Sway"),
+                ("XDG_SESSION_DESKTOP", "Hyprland"),
+                ("HYPRLAND_INSTANCE_SIGNATURE", "stale-instance"),
+                ("SWAYSOCK", "/run/user/1000/sway-ipc.sock"),
+            ])),
+            CompositorKind::Sway
         );
     }
 
