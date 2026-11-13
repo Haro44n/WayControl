@@ -2,7 +2,117 @@
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd -- "$script_dir/.." && pwd)"
 cd "$script_dir/../android"
+
+daemon="$repo_root/target/release/waycontrold"
+test_root="$(mktemp -d)"
+runtime_dir="$test_root/runtime"
+mkdir -m 700 "$test_root/config" "$runtime_dir"
+export XDG_CONFIG_HOME="$test_root/config"
+export XDG_RUNTIME_DIR="$runtime_dir"
+export WAYCONTROL_BIND_ADDR=127.0.0.1:18765
+daemon_pid=""
+approval_pid=""
+
+cleanup() {
+  local result=$?
+  if [ -n "$approval_pid" ]; then
+    kill "$approval_pid" 2>/dev/null || true
+    wait "$approval_pid" 2>/dev/null || true
+  fi
+  if [ -n "$daemon_pid" ]; then
+    kill -TERM "$daemon_pid" 2>/dev/null || true
+    wait "$daemon_pid" 2>/dev/null || true
+  fi
+  if [ "$result" -ne 0 ] && [ -f "$test_root/daemon.log" ]; then
+    cat "$test_root/daemon.log"
+    if [ -f "$test_root/approval.log" ]; then cat "$test_root/approval.log"; fi
+  fi
+  rm -rf "$test_root"
+  exit "$result"
+}
+trap cleanup EXIT
+
+./gradlew assembleDebugAndroidTest
+
+if [ ! -x "$daemon" ]; then
+  echo "The release WayControl daemon was not built at $daemon" >&2
+  exit 1
+fi
+"$daemon" serve >"$test_root/daemon.log" 2>&1 &
+daemon_pid=$!
+
+pairing_info=""
+for attempt in $(seq 1 100); do
+  if ! kill -0 "$daemon_pid" 2>/dev/null; then
+    cat "$test_root/daemon.log" >&2
+    echo "WayControl daemon exited before its admin socket became ready" >&2
+    exit 1
+  fi
+  if pairing_info="$("$daemon" pairing-info 2>/dev/null)"; then break; fi
+  sleep 0.2
+done
+if [ -z "$pairing_info" ]; then
+  cat "$test_root/daemon.log" >&2
+  echo "WayControl pairing information did not become available" >&2
+  exit 1
+fi
+
+readarray -t pairing_values < <(python3 -c 'import json,sys; p=json.load(sys.stdin); print("https://" + p["server_address"]); print(p["certificate_sha256"]); print(p["pairing"]["code"])' <<<"$pairing_info")
+if [ "${#pairing_values[@]}" -ne 3 ]; then
+  echo "WayControl returned incomplete Android pairing details" >&2
+  exit 1
+fi
+endpoint="${pairing_values[0]}"
+fingerprint="${pairing_values[1]}"
+pairing_code="${pairing_values[2]}"
+computer_name="$(tr -d '\r\n' </etc/hostname)"
+if [ -z "$computer_name" ]; then
+  echo "The CI host has no hostname to verify in the Android dashboard" >&2
+  exit 1
+fi
+test_port="${WAYCONTROL_BIND_ADDR##*:}"
+printf '::add-mask::%s\n' "$pairing_code"
+adb reverse "tcp:$test_port" "tcp:$test_port"
+
+(
+  for attempt in $(seq 1 450); do
+    pending="$("$daemon" pending 2>/dev/null || true)"
+    request_id="$(python3 -c 'import json,sys; p=json.load(sys.stdin); print(next((d["request_id"] for d in p.get("pending",[]) if d.get("device_name")=="Android device"), ""))' <<<"$pending" 2>/dev/null || true)"
+    if [ -n "$request_id" ]; then
+      printf 'y\n' | "$daemon" approve "$request_id"
+      exit $?
+    fi
+    sleep 0.2
+  done
+  echo "Android pairing request did not arrive before the test deadline" >&2
+  exit 1
+) >"$test_root/approval.log" 2>&1 &
+approval_pid=$!
+
+./gradlew connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.waycontrolEndpoint="$endpoint" \
+  -Pandroid.testInstrumentationRunnerArguments.waycontrolFingerprint="$fingerprint" \
+  -Pandroid.testInstrumentationRunnerArguments.waycontrolPairingCode="$pairing_code" \
+  -Pandroid.testInstrumentationRunnerArguments.waycontrolComputerName="$computer_name" \
+  -Pandroid.testInstrumentationRunnerArguments.class=dev.waycontrol.AndroidRustDaemonE2ETest
+wait "$approval_pid"
+approval_pid=""
+
+python3 - app/build/outputs/androidTest-results/connected/debug <<'PY'
+import pathlib
+import sys
+import xml.etree.ElementTree as ET
+
+reports = list(pathlib.Path(sys.argv[1]).glob("TEST-dev.waycontrol.AndroidRustDaemonE2ETest.xml"))
+if len(reports) != 1:
+    raise SystemExit("Android/Rust pairing test report was not produced")
+suite = ET.parse(reports[0]).getroot()
+if int(suite.attrib.get("tests", "0")) < 1 or int(suite.attrib.get("skipped", "0")) or int(suite.attrib.get("failures", "0")) or int(suite.attrib.get("errors", "0")):
+    raise SystemExit("Android/Rust pairing E2E test was skipped or failed")
+print("Android/Rust pairing E2E test ran and passed")
+PY
 
 ./gradlew connectedDebugAndroidTest
 
