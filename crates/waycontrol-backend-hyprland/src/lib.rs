@@ -229,11 +229,35 @@ impl CompositorBackend for HyprlandAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{os::unix::net::UnixListener as StdUnixListener, time::SystemTime};
+    use std::{os::unix::net::UnixListener as StdUnixListener, path::Path, time::SystemTime};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::UnixListener,
     };
+
+    fn start_mock_hyprland_ipc(socket_dir: &Path) -> (tokio::task::JoinHandle<()>, UnixListener) {
+        let ipc = UnixListener::bind(socket_dir.join(".socket.sock")).unwrap();
+        let events = UnixListener::bind(socket_dir.join(".socket2.sock")).unwrap();
+        let ipc_task = tokio::spawn(async move {
+            for _ in 0..10 {
+                let (mut stream, _) = ipc.accept().await.unwrap();
+                let mut request = [0_u8; 64];
+                let size = stream.read(&mut request).await.unwrap();
+                let response = match &request[..size] {
+                    b"j/version" => r#"{"tag":"0.50.0"}"#,
+                    b"j/workspaces" => "[]",
+                    b"j/activeworkspace" => r#"{"id":1}"#,
+                    b"j/clients" => "[]",
+                    b"j/monitors" => "[]",
+                    b"j/activewindow" => "{}",
+                    other => panic!("unexpected Hyprland IPC request: {other:?}"),
+                };
+                stream.write_all(response.as_bytes()).await.unwrap();
+                stream.shutdown().await.unwrap();
+            }
+        });
+        (ipc_task, events)
+    }
 
     #[test]
     fn unnegotiated_adapter_does_not_advertise_compositor_operations() {
@@ -281,26 +305,7 @@ mod tests {
             std::process::id()
         ));
         std::fs::create_dir(&socket_dir).unwrap();
-        let ipc = UnixListener::bind(socket_dir.join(".socket.sock")).unwrap();
-        let events = UnixListener::bind(socket_dir.join(".socket2.sock")).unwrap();
-        let ipc_task = tokio::spawn(async move {
-            for _ in 0..10 {
-                let (mut stream, _) = ipc.accept().await.unwrap();
-                let mut request = [0_u8; 64];
-                let size = stream.read(&mut request).await.unwrap();
-                let response = match &request[..size] {
-                    b"j/version" => r#"{"tag":"0.50.0"}"#,
-                    b"j/workspaces" => "[]",
-                    b"j/activeworkspace" => r#"{"id":1}"#,
-                    b"j/clients" => "[]",
-                    b"j/monitors" => "[]",
-                    b"j/activewindow" => "{}",
-                    other => panic!("unexpected Hyprland IPC request: {other:?}"),
-                };
-                stream.write_all(response.as_bytes()).await.unwrap();
-                stream.shutdown().await.unwrap();
-            }
-        });
+        let (ipc_task, events) = start_mock_hyprland_ipc(&socket_dir);
         let backend = HyprlandAdapter {
             client: Some(HyprlandClient::at_socket_dir(socket_dir.clone())),
             version: Arc::new(OnceLock::new()),
@@ -313,6 +318,47 @@ mod tests {
         assert!(capabilities.windows);
         assert!(capabilities.monitor_power);
         assert!(capabilities.events);
+        ipc_task.await.unwrap();
+        drop(events);
+        std::fs::remove_dir_all(socket_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn late_hyprland_ipc_is_negotiated_after_user_service_startup() {
+        let unique = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let socket_dir = std::env::temp_dir().join(format!(
+            "waycontrol-hyprland-late-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&socket_dir).unwrap();
+        for name in [".socket.sock", ".socket2.sock"] {
+            let listener = StdUnixListener::bind(socket_dir.join(name)).unwrap();
+            drop(listener);
+        }
+        let backend = HyprlandAdapter {
+            client: Some(HyprlandClient::at_socket_dir(socket_dir.clone())),
+            version: Arc::new(OnceLock::new()),
+            capabilities: Arc::new(RwLock::new(CompositorCapabilities::none())),
+        };
+        assert!(!backend.negotiate_capabilities().await);
+        backend.retry_negotiation_until_ready();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(backend.capabilities(), CompositorCapabilities::none());
+
+        std::fs::remove_file(socket_dir.join(".socket.sock")).unwrap();
+        std::fs::remove_file(socket_dir.join(".socket2.sock")).unwrap();
+        let (ipc_task, events) = start_mock_hyprland_ipc(&socket_dir);
+        tokio::time::timeout(Duration::from_secs(4), async {
+            while !backend.capabilities().workspaces {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("background negotiation should discover the late IPC server");
+        assert!(backend.capabilities().events);
         ipc_task.await.unwrap();
         drop(events);
         std::fs::remove_dir_all(socket_dir).unwrap();
