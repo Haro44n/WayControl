@@ -40,7 +40,13 @@ if [ ! -x "$daemon" ]; then
   echo "The release WayControl daemon was not built at $daemon" >&2
   exit 1
 fi
-"$daemon" serve >"$test_root/daemon.log" 2>&1 &
+env \
+  -u HYPRLAND_INSTANCE_SIGNATURE \
+  -u SWAYSOCK \
+  -u NIRI_SOCKET \
+  -u XDG_CURRENT_DESKTOP \
+  -u XDG_SESSION_DESKTOP \
+  "$daemon" serve >"$test_root/daemon.log" 2>&1 &
 daemon_pid=$!
 
 pairing_info=""

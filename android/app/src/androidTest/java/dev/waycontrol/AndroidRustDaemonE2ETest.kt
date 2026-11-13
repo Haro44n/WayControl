@@ -47,10 +47,12 @@ class AndroidRustDaemonE2ETest {
         composeRule.onNodeWithText("Pair this device").performScrollTo().performClick()
 
         composeRule.waitUntil(90_000) {
-            composeRule.onAllNodesWithText("CONNECTED").fetchSemanticsNodes().isNotEmpty() &&
-                composeRule.onAllNodesWithText(expectedComputerName!!).fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodesWithText("CONNECTED").fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithText("CONNECTED").assertExists()
+        composeRule.waitUntil(30_000) {
+            composeRule.onAllNodesWithText(expectedComputerName!!).fetchSemanticsNodes().isNotEmpty()
+        }
         composeRule.onNodeWithText(expectedComputerName!!).assertExists()
 
         val saved = assertNotNullAndReturn(store.load())
