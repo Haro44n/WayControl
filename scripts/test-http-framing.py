@@ -14,10 +14,13 @@ import time
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BINARY = ROOT / "target/release/waycontrold"
 MAX_CONCURRENT_API_CONNECTIONS = 64
+MAX_CONCURRENT_CONNECTIONS_PER_IP = 16
 
 
-def open_idle_tls(context, port):
-    raw = socket.create_connection(("127.0.0.1", port), timeout=5)
+def open_idle_tls(context, port, source_ip="127.0.0.1"):
+    raw = socket.create_connection(
+        ("127.0.0.1", port), timeout=5, source_address=(source_ip, 0)
+    )
     return context.wrap_socket(raw, server_hostname="127.0.0.1")
 
 
@@ -146,14 +149,36 @@ def main():
                 pass
             slow_body.close()
 
-            # Completed TLS sessions that never send HTTP must still consume a
-            # bounded slot so unauthenticated clients cannot exhaust daemon FDs.
-            idle_connections = []
+            # One source cannot monopolize the process-wide TLS capacity.
+            per_ip_connections = []
             try:
-                for _ in range(MAX_CONCURRENT_API_CONNECTIONS):
-                    idle_connections.append(open_idle_tls(tls, port))
+                for _ in range(MAX_CONCURRENT_CONNECTIONS_PER_IP):
+                    per_ip_connections.append(open_idle_tls(tls, port))
                 try:
                     excess = open_idle_tls(tls, port)
+                except OSError:
+                    pass
+                else:
+                    excess.close()
+                    raise AssertionError("server accepted more than 16 concurrent TLS connections from one IP")
+
+                per_ip_connections.pop().close()
+                recovered = open_idle_tls(tls, port)
+                recovered.close()
+            finally:
+                for connection in per_ip_connections:
+                    connection.close()
+
+            # Completed TLS sessions that never send HTTP must still consume a
+            # bounded global slot so unauthenticated clients cannot exhaust daemon FDs.
+            idle_connections = []
+            try:
+                source_ips = ("127.0.0.1", "127.0.0.2", "127.0.0.3", "127.0.0.4")
+                for index in range(MAX_CONCURRENT_API_CONNECTIONS):
+                    source_ip = source_ips[index // MAX_CONCURRENT_CONNECTIONS_PER_IP]
+                    idle_connections.append(open_idle_tls(tls, port, source_ip))
+                try:
+                    excess = open_idle_tls(tls, port, "127.0.0.5")
                 except (OSError, TimeoutError):
                     pass
                 else:
@@ -164,7 +189,7 @@ def main():
                 deadline = time.monotonic() + 2
                 while True:
                     try:
-                        recovered = open_idle_tls(tls, port)
+                        recovered = open_idle_tls(tls, port, "127.0.0.5")
                         recovered.close()
                         break
                     except (OSError, TimeoutError):
@@ -233,7 +258,8 @@ def main():
             fresh.close()
             assert response.status == 200 and result["success"], "fresh connection failed after framing probe"
             print(
-                "PASS: pairing, incomplete-body timeout, 64-connection cap and recovery, "
+                "PASS: pairing, incomplete-body timeout, 16-per-IP and 64-global connection caps "
+                "with recovery, "
                 "authenticated ping, and HTTP framing rejection"
             )
         finally:

@@ -158,17 +158,32 @@ pub async fn run_lan_discovery(
 }
 pub const MAX_API_BODY_BYTES: usize = 64 * 1024;
 const MAX_CONCURRENT_API_CONNECTIONS: usize = 64;
+const MAX_CONCURRENT_CONNECTIONS_PER_IP: usize = 16;
 const API_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn normalize_client_ip(source: IpAddr) -> IpAddr {
+    match source {
+        IpAddr::V6(address) => address
+            .to_ipv4_mapped()
+            .map(IpAddr::V4)
+            .unwrap_or(IpAddr::V6(address)),
+        address => address,
+    }
+}
 
 #[derive(Clone)]
 struct ConnectionLimitAcceptor {
     permits: Arc<Semaphore>,
+    per_ip_limit: usize,
+    active_by_ip: Arc<std::sync::Mutex<HashMap<IpAddr, usize>>>,
 }
 
 impl ConnectionLimitAcceptor {
-    fn new(max_connections: usize) -> Self {
+    fn with_ip_limit(max_connections: usize, per_ip_limit: usize) -> Self {
         Self {
             permits: Arc::new(Semaphore::new(max_connections)),
+            per_ip_limit,
+            active_by_ip: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
     }
 }
@@ -176,6 +191,48 @@ impl ConnectionLimitAcceptor {
 struct LimitedTcpStream {
     stream: TcpStream,
     _permit: OwnedSemaphorePermit,
+    _ip_permit: IpConnectionPermit,
+}
+
+struct IpConnectionPermit {
+    active_by_ip: Arc<std::sync::Mutex<HashMap<IpAddr, usize>>>,
+    ip: IpAddr,
+}
+
+impl Drop for IpConnectionPermit {
+    fn drop(&mut self) {
+        let mut active = self
+            .active_by_ip
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(count) = active.get_mut(&self.ip) {
+            *count -= 1;
+            if *count == 0 {
+                active.remove(&self.ip);
+            }
+        }
+    }
+}
+
+impl ConnectionLimitAcceptor {
+    fn acquire_ip_permit(&self, ip: IpAddr) -> io::Result<IpConnectionPermit> {
+        let mut active = self
+            .active_by_ip
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let count = active.entry(ip).or_default();
+        if *count >= self.per_ip_limit {
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionRefused,
+                "per-source connection limit reached",
+            ));
+        }
+        *count += 1;
+        Ok(IpConnectionPermit {
+            active_by_ip: Arc::clone(&self.active_by_ip),
+            ip,
+        })
+    }
 }
 
 impl tokio::io::AsyncRead for LimitedTcpStream {
@@ -216,6 +273,10 @@ where
 
     fn accept(&self, stream: TcpStream, service: S) -> Self::Future {
         let permit = self.permits.clone().try_acquire_owned();
+        let peer_ip = stream
+            .peer_addr()
+            .map(|address| normalize_client_ip(address.ip()));
+        let acceptor = self.clone();
         Box::pin(async move {
             let permit = permit.map_err(|_| {
                 io::Error::new(
@@ -223,10 +284,13 @@ where
                     "concurrent connection limit reached",
                 )
             })?;
+            let peer_ip = peer_ip?;
+            let ip_permit = acceptor.acquire_ip_permit(peer_ip)?;
             Ok((
                 LimitedTcpStream {
                     stream,
                     _permit: permit,
+                    _ip_permit: ip_permit,
                 },
                 service,
             ))
@@ -1373,13 +1437,7 @@ impl AppState {
 
     async fn allow_pairing_attempt(&self, source: IpAddr) -> bool {
         let now = tokio::time::Instant::now();
-        let source = match source {
-            IpAddr::V6(address) => address
-                .to_ipv4_mapped()
-                .map(IpAddr::V4)
-                .unwrap_or(IpAddr::V6(address)),
-            address => address,
-        };
+        let source = normalize_client_ip(source);
         let mut attempts = self.0.pairing_attempts.lock().await;
         attempts.retain(|_, window| {
             now.saturating_duration_since(window.started) < PAIRING_RATE_WINDOW
@@ -2689,7 +2747,10 @@ pub fn tls_server(
 ) -> impl Future<Output = io::Result<()>> + Send + 'static {
     axum_server::bind_rustls(bind, tls)
         .map(|acceptor| {
-            acceptor.acceptor(ConnectionLimitAcceptor::new(MAX_CONCURRENT_API_CONNECTIONS))
+            acceptor.acceptor(ConnectionLimitAcceptor::with_ip_limit(
+                MAX_CONCURRENT_API_CONNECTIONS,
+                MAX_CONCURRENT_CONNECTIONS_PER_IP,
+            ))
         })
         .serve(router(state).into_make_service_with_connect_info::<SocketAddr>())
 }
@@ -2699,6 +2760,14 @@ mod tests {
     use super::*;
 
     static MPRIS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    #[test]
+    fn client_ip_normalization_unifies_ipv4_mapped_addresses() {
+        let v4 = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 8));
+        let mapped = IpAddr::V6(Ipv4Addr::new(192, 0, 2, 8).to_ipv6_mapped());
+        assert_eq!(normalize_client_ip(mapped), v4);
+        assert_eq!(normalize_client_ip(v4), v4);
+    }
 
     #[tokio::test]
     async fn connection_limiter_rejects_excess_sockets_until_a_connection_closes() {
@@ -2715,7 +2784,7 @@ mod tests {
         }
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let limiter = ConnectionLimitAcceptor::new(2);
+        let limiter = ConnectionLimitAcceptor::with_ip_limit(2, 2);
         let first = limiter
             .accept(accepted_stream(&listener).await, ())
             .await
@@ -2736,6 +2805,65 @@ mod tests {
                 .accept(accepted_stream(&listener).await, ())
                 .await
                 .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn connection_limiter_applies_a_per_ip_cap_and_releases_it_on_close() {
+        use axum_server::accept::Accept;
+        use tokio::net::{TcpListener, TcpSocket};
+
+        async fn accepted_stream(listener: &TcpListener, source_ip: Ipv4Addr) -> TcpStream {
+            let client = TcpSocket::new_v4().unwrap();
+            client.bind(SocketAddr::new(source_ip.into(), 0)).unwrap();
+            let client = client
+                .connect(listener.local_addr().unwrap())
+                .await
+                .unwrap();
+            let (server, peer) = listener.accept().await.unwrap();
+            assert_eq!(peer.ip(), IpAddr::V4(source_ip));
+            drop(client);
+            server
+        }
+
+        let listener = TcpListener::bind("0.0.0.0:0").await.unwrap();
+        let limiter = ConnectionLimitAcceptor::with_ip_limit(4, 2);
+        let first = limiter
+            .accept(accepted_stream(&listener, Ipv4Addr::LOCALHOST).await, ())
+            .await
+            .unwrap();
+        let _second = limiter
+            .accept(accepted_stream(&listener, Ipv4Addr::LOCALHOST).await, ())
+            .await
+            .unwrap();
+
+        let error = match limiter
+            .accept(accepted_stream(&listener, Ipv4Addr::LOCALHOST).await, ())
+            .await
+        {
+            Ok(_) => panic!("a source IP must not exceed its connection limit"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::ConnectionRefused);
+
+        assert!(
+            limiter
+                .accept(
+                    accepted_stream(&listener, Ipv4Addr::new(127, 0, 0, 2)).await,
+                    ()
+                )
+                .await
+                .is_ok(),
+            "another source IP should retain access to the global pool"
+        );
+
+        drop(first);
+        assert!(
+            limiter
+                .accept(accepted_stream(&listener, Ipv4Addr::LOCALHOST).await, ())
+                .await
+                .is_ok(),
+            "closing a connection should release its source-IP slot"
         );
     }
 
