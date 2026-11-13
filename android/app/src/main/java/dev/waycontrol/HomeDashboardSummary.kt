@@ -14,6 +14,9 @@ internal data class HomeDashboardSummary(
 
 internal fun homeActionsEnabled(connectionStatus: String): Boolean = connectionStatus == "Connected"
 
+internal fun automationActionsEnabled(connectionStatus: String, hasToken: Boolean): Boolean =
+    hasToken && homeActionsEnabled(connectionStatus)
+
 internal fun homeDashboardSummary(
     desktop: JSONObject,
     workspaces: JSONArray,

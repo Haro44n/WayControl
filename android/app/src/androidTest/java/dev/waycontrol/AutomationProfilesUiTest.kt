@@ -7,6 +7,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -24,6 +25,32 @@ import java.util.concurrent.atomic.AtomicReference
 class AutomationProfilesUiTest {
     @get:Rule
     val composeRule = createComposeRule()
+
+    @Test
+    fun runButtonStaysDisabledWhenTheDesktopConnectionIsDown() {
+        val profile = AutomationProfile(
+            id = "away",
+            name = "Away",
+            icon = "🌙",
+            actions = listOf(AutomationAction(AutomationActionType.PAUSE_MEDIA)),
+        )
+        composeRule.setContent {
+            MaterialTheme {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    AutomationScreen(
+                        profiles = listOf(profile),
+                        result = null,
+                        connected = false,
+                        onSave = {},
+                        onDelete = {},
+                        onRun = {},
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithText("Run").performScrollTo().assertIsNotEnabled()
+    }
 
     @Test
     fun profilesListShowsPresetsAndNewProfileSavesValidatedLaunchAction() {

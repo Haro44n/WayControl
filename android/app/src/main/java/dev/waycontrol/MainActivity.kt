@@ -185,7 +185,11 @@ internal fun WayControlApp(store: SecureConnectionStore) {
         scope.launch {
             automationResult = withContext(Dispatchers.IO) {
                 runCatching {
-                    val savedToken = token ?: error("Connect to a desktop before running a profile")
+                    val savedToken = token
+                    check(automationActionsEnabled(status, savedToken != null)) {
+                        "Connect to a desktop before running a profile"
+                    }
+                    checkNotNull(savedToken)
                     executeAutomationProfile(profile, confirmed) { operation, payload ->
                         WayControlClient(endpoint, pin, savedToken).request(operation, payload)
                     }
@@ -412,7 +416,7 @@ internal fun WayControlApp(store: SecureConnectionStore) {
                     Destination.Automation -> AutomationScreen(
                         profiles = automationProfiles,
                         result = automationResult,
-                        connected = token != null,
+                        connected = automationActionsEnabled(status, token != null),
                         onSave = { profile ->
                             val updated = if (automationProfiles.any { it.id == profile.id }) {
                                 automationProfiles.map { if (it.id == profile.id) profile else it }

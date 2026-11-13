@@ -14,6 +14,13 @@ class HomeDashboardSummaryTest {
     }
 
     @Test
+    fun automationRequiresBothStoredCredentialsAndALiveConnection() {
+        assertEquals(true, automationActionsEnabled("Connected", hasToken = true))
+        assertEquals(false, automationActionsEnabled("Disconnected", hasToken = true))
+        assertEquals(false, automationActionsEnabled("Connected", hasToken = false))
+    }
+
+    @Test
     fun summaryShowsActualDesktopOsCompositorWorkspaceAppAndMeasuredLatency() {
         val desktop = JSONObject()
             .put("computer_name", "Cherlove Desktop")
