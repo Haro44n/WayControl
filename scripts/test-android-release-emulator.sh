@@ -105,10 +105,20 @@ import pathlib
 import sys
 import xml.etree.ElementTree as ET
 
-reports = list(pathlib.Path(sys.argv[1]).glob("TEST-dev.waycontrol.AndroidRustDaemonE2ETest.xml"))
-if len(reports) != 1:
-    raise SystemExit("Android/Rust pairing test report was not produced")
-suite = ET.parse(reports[0]).getroot()
+report_dir = pathlib.Path(sys.argv[1])
+reports = list(report_dir.glob("TEST-*.xml"))
+target_suites = []
+for report in reports:
+    root = ET.parse(report).getroot()
+    target_suites.extend(
+        suite for suite in root.findall(".//testsuite")
+        if suite.attrib.get("name") == "dev.waycontrol.AndroidRustDaemonE2ETest"
+    )
+if not target_suites:
+    raise SystemExit(f"Android/Rust pairing test report was not produced in {report_dir}")
+if len(target_suites) != 1:
+    raise SystemExit(f"Expected one Android/Rust pairing test report, found {len(target_suites)}")
+suite = target_suites[0]
 if int(suite.attrib.get("tests", "0")) < 1 or int(suite.attrib.get("skipped", "0")) or int(suite.attrib.get("failures", "0")) or int(suite.attrib.get("errors", "0")):
     raise SystemExit("Android/Rust pairing E2E test was skipped or failed")
 print("Android/Rust pairing E2E test ran and passed")
