@@ -22,6 +22,13 @@ pub struct NiriAdapter {
 }
 
 impl NiriAdapter {
+    /// Connect to Niri IPC and verify workspace and window queries before publishing capabilities.
+    pub async fn connect() -> Result<Self, String> {
+        let adapter = Self::from_env()?;
+        adapter.workspace_values().await?;
+        Ok(adapter)
+    }
+
     pub fn from_env() -> Result<Self, String> {
         let socket = env::var_os("NIRI_SOCKET")
             .map(PathBuf::from)

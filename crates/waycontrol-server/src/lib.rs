@@ -563,6 +563,13 @@ impl WaylandBackend {
         if kind == CompositorKind::Sway {
             return Self::Sway(SwayAdapter::from_env_or_discover().await);
         }
+        if kind == CompositorKind::Niri {
+            return match tokio::time::timeout(Duration::from_secs(2), NiriAdapter::connect()).await
+            {
+                Ok(Ok(adapter)) => Self::Niri(adapter),
+                Ok(Err(_)) | Err(_) => Self::Unsupported(CompositorInfo::detected(kind)),
+            };
+        }
         if kind == CompositorKind::KdeKWin {
             return match tokio::time::timeout(Duration::from_secs(2), KWinAdapter::connect()).await
             {

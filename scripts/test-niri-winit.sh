@@ -37,6 +37,12 @@ workspace "WayControlTarget"
 EOF
 
 niri validate --config "$runtime_dir/niri.kdl"
+env -u HYPRLAND_INSTANCE_SIGNATURE -u SWAYSOCK \
+    XDG_CURRENT_DESKTOP=niri XDG_SESSION_DESKTOP=niri XDG_SESSION_TYPE=wayland \
+    NIRI_SOCKET="$runtime_dir/missing-niri.sock" \
+    cargo run --quiet --locked -p waycontrol-server -- inspect \
+    | python3 -c 'import json,sys; report=json.load(sys.stdin); assert report["compositor"]["id"] == "niri"; assert not any(report["capabilities"].values()); assert report["state"]["available"] is False'
+
 Xvfb "$DISPLAY" -screen 0 1280x720x24 -nolisten tcp >"$runtime_dir/xvfb.log" 2>&1 &
 xvfb_pid=$!
 for _ in $(seq 1 100); do
@@ -87,6 +93,11 @@ if [[ "$ready" != true ]]; then
     echo "Niri IPC did not become ready" >&2
     exit 1
 fi
+
+env -u HYPRLAND_INSTANCE_SIGNATURE -u SWAYSOCK \
+    XDG_CURRENT_DESKTOP=niri XDG_SESSION_DESKTOP=niri XDG_SESSION_TYPE=wayland \
+    cargo run --quiet --locked -p waycontrol-server -- inspect \
+    | python3 -c 'import json,sys; report=json.load(sys.stdin); assert report["compositor"]["id"] == "niri"; assert report["capabilities"]["workspaces"] is True; assert report["capabilities"]["windows"] is True; assert report["state"]["available"] is True'
 
 foot --app-id=WayControlLiveTest --title=WayControlLiveTest \
     >"$runtime_dir/foot.log" 2>&1 &
