@@ -4,6 +4,9 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.io.InputStream
 import java.net.URL
 import java.net.URI
 import java.security.KeyStore
@@ -17,6 +20,23 @@ import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
+
+internal const val MAX_API_RESPONSE_BYTES = 2 * 1024 * 1024
+
+internal fun readBoundedResponse(input: InputStream, maxBytes: Int): String {
+    require(maxBytes >= 0) { "Response limit must not be negative" }
+    val output = ByteArrayOutputStream(minOf(maxBytes, 8 * 1024))
+    val buffer = ByteArray(8 * 1024)
+    while (true) {
+        val count = input.read(buffer)
+        if (count < 0) break
+        if (count > maxBytes - output.size()) {
+            throw IOException("Server response exceeds the $maxBytes-byte limit")
+        }
+        output.write(buffer, 0, count)
+    }
+    return output.toString(Charsets.UTF_8.name())
+}
 
 object CertificatePin {
     fun canonicalize(value: String): String {
@@ -140,9 +160,10 @@ class WayControlClient(baseUrl: String, fingerprint: String, private val token: 
         }
         try {
             if (body != null) connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
-            val stream = if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream
-            val response = stream?.bufferedReader()?.use { it.readText() } ?: "{}"
-            if (connection.responseCode !in 200..299) {
+            val responseCode = connection.responseCode
+            val stream = if (responseCode in 200..299) connection.inputStream else connection.errorStream
+            val response = stream?.use { readBoundedResponse(it, MAX_API_RESPONSE_BYTES) } ?: "{}"
+            if (responseCode !in 200..299) {
                 val message = runCatching { JSONObject(response).getJSONObject("error").getString("message") }.getOrDefault("HTTP ${connection.responseCode}")
                 error(message)
             }
