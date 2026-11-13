@@ -585,7 +585,7 @@ internal fun WayControlApp(store: SecureConnectionStore) {
             }
         }
     }
-    HomeQuickActions(capabilities, monitors, audio, media, action)
+    HomeQuickActions(capabilities, monitors, audio, media, homeActionsEnabled(status), action)
     Text("Performance", color = MainText, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Metric("CPU", desktop.optDouble("cpu_usage_percent", Double.NaN).let { if (it.isNaN()) "Unavailable" else "%.1f%%".format(it) }, Modifier.weight(1f))
@@ -610,6 +610,7 @@ private fun HomeQuickActions(
     monitors: JSONArray,
     audio: JSONObject,
     media: JSONObject,
+    actionsEnabled: Boolean,
     action: (String, JSONObject) -> Unit,
 ) {
     var confirmation by remember { mutableStateOf<Pair<String, String>?>(null) }
@@ -620,7 +621,10 @@ private fun HomeQuickActions(
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (capabilities.lockScreen) Button(onClick = { action("system.lock", JSONObject()) }) { Text("Lock") }
+                if (capabilities.lockScreen) Button(
+                    onClick = { action("system.lock", JSONObject()) },
+                    enabled = actionsEnabled,
+                ) { Text("Lock") }
                 if (capabilities.monitorPower) for (index in 0 until monitors.length()) {
                     val monitor = monitors.optJSONObject(index) ?: continue
                     val name = monitor.optString("name")
@@ -628,7 +632,7 @@ private fun HomeQuickActions(
                     Button(onClick = {
                         if (enabled) confirmation = "monitor" to name
                         else action("monitor.power", JSONObject().put("monitor", name).put("enabled", true))
-                    }) { Text(if (enabled) "Turn off $name" else "Turn on $name") }
+                    }, enabled = actionsEnabled) { Text(if (enabled) "Turn off $name" else "Turn on $name") }
                 }
             }
             if (audio.optBoolean("available")) {
@@ -636,14 +640,14 @@ private fun HomeQuickActions(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Button(onClick = { action("audio.volume", JSONObject().put("direction", "down")) }) { Text("Volume −") }
-                    Button(onClick = { action("audio.volume", JSONObject().put("direction", "up")) }) { Text("Volume +") }
+                    Button(onClick = { action("audio.volume", JSONObject().put("direction", "down")) }, enabled = actionsEnabled) { Text("Volume −") }
+                    Button(onClick = { action("audio.volume", JSONObject().put("direction", "up")) }, enabled = actionsEnabled) { Text("Volume +") }
                     val muted = if (audio.has("output_muted") && !audio.isNull("output_muted")) audio.optBoolean("output_muted") else null
-                    Button(onClick = { action("audio.output_mute", JSONObject()) }) {
+                    Button(onClick = { action("audio.output_mute", JSONObject()) }, enabled = actionsEnabled) {
                         Text(when (muted) { true -> "Unmute"; false -> "Mute"; null -> "Mute toggle" })
                     }
                     val microphoneMuted = if (audio.has("microphone_muted") && !audio.isNull("microphone_muted")) audio.optBoolean("microphone_muted") else null
-                    Button(onClick = { action("audio.microphone_mute", JSONObject()) }) {
+                    Button(onClick = { action("audio.microphone_mute", JSONObject()) }, enabled = actionsEnabled) {
                         Text(when (microphoneMuted) { true -> "Unmute mic"; false -> "Mute mic"; null -> "Mic mute toggle" })
                     }
                 }
@@ -654,19 +658,19 @@ private fun HomeQuickActions(
                 val players = media.optJSONArray("players") ?: JSONArray()
                 val player = players.optJSONObject(0)
                 if (player == null) {
-                    Button(onClick = { action("media.play_pause", JSONObject()) }) { Text("Play / pause") }
+                    Button(onClick = { action("media.play_pause", JSONObject()) }, enabled = actionsEnabled) { Text("Play / pause") }
                 } else if (mediaPlayerPresentation(player).showPlayPause) {
                     Button(onClick = {
                         action("media.play_pause_for", JSONObject().put("player_id", player.optString("player_id")))
-                    }) { Text(mediaPlayerPresentation(player).playPauseLabel) }
+                    }, enabled = actionsEnabled) { Text(mediaPlayerPresentation(player).playPauseLabel) }
                 }
             } else {
                 Text("Media controls unavailable", color = SecondaryText)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { confirmation = "power" to "suspend" }) { Text("Suspend") }
-                Button(onClick = { confirmation = "power" to "reboot" }) { Text("Reboot") }
-                Button(onClick = { confirmation = "power" to "shutdown" }) { Text("Shut down") }
+                Button(onClick = { confirmation = "power" to "suspend" }, enabled = actionsEnabled) { Text("Suspend") }
+                Button(onClick = { confirmation = "power" to "reboot" }, enabled = actionsEnabled) { Text("Reboot") }
+                Button(onClick = { confirmation = "power" to "shutdown" }, enabled = actionsEnabled) { Text("Shut down") }
             }
         }
     }
@@ -842,6 +846,7 @@ private fun HomeQuickActions(
 @Composable private fun SystemScreenContent(desktop: JSONObject, monitors: JSONArray, status: String, capabilities: CompositorCapabilities, audio: JSONObject, media: JSONObject, history: TelemetryHistory, artwork: MediaArtworkImage?, action: (String, JSONObject) -> Unit) {
     Header("System monitor", status)
     TelemetryHistoryCharts(history)
+    val actionsEnabled = homeActionsEnabled(status)
     var powerConfirmation by remember { mutableStateOf<String?>(null) }
     var monitorConfirmation by remember { mutableStateOf<String?>(null) }
     val memory = desktop.optJSONObject("memory")
@@ -930,194 +935,198 @@ private fun HomeQuickActions(
         }
     }
 
-    Text("Controls", color = MainText, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
-    Card {
-        Text("Audio and media", color = MainText, fontWeight = FontWeight.Medium)
-        if (audio.optBoolean("available")) {
-            val outputDevices = audio.optJSONArray("output_devices") ?: JSONArray()
-            val inputDevices = audio.optJSONArray("input_devices") ?: JSONArray()
-            if (outputDevices.length() > 0) {
-                var outputMenuExpanded by remember { mutableStateOf(false) }
-                val activeOutput = (0 until outputDevices.length()).mapNotNull { outputDevices.optJSONObject(it) }
-                    .firstOrNull { it.optBoolean("active") }
-                Box {
-                    Button(onClick = { outputMenuExpanded = true }) {
-                        Text("Output: ${activeOutput?.optString("name") ?: "Select device"}")
-                    }
-                    DropdownMenu(expanded = outputMenuExpanded, onDismissRequest = { outputMenuExpanded = false }) {
-                        for (index in 0 until outputDevices.length()) {
-                            val device = outputDevices.optJSONObject(index) ?: continue
-                            DropdownMenuItem(
-                                text = { Text(device.optString("name")) },
-                                onClick = {
-                                    outputMenuExpanded = false
-                                    action("audio.output.select", JSONObject().put("id", device.optLong("id")))
-                                },
-                            )
+    if (actionsEnabled) {
+        Text("Controls", color = MainText, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
+        Card {
+            Text("Audio and media", color = MainText, fontWeight = FontWeight.Medium)
+            if (audio.optBoolean("available")) {
+                val outputDevices = audio.optJSONArray("output_devices") ?: JSONArray()
+                val inputDevices = audio.optJSONArray("input_devices") ?: JSONArray()
+                if (outputDevices.length() > 0) {
+                    var outputMenuExpanded by remember { mutableStateOf(false) }
+                    val activeOutput = (0 until outputDevices.length()).mapNotNull { outputDevices.optJSONObject(it) }
+                        .firstOrNull { it.optBoolean("active") }
+                    Box {
+                        Button(onClick = { outputMenuExpanded = true }) {
+                            Text("Output: ${activeOutput?.optString("name") ?: "Select device"}")
+                        }
+                        DropdownMenu(expanded = outputMenuExpanded, onDismissRequest = { outputMenuExpanded = false }) {
+                            for (index in 0 until outputDevices.length()) {
+                                val device = outputDevices.optJSONObject(index) ?: continue
+                                DropdownMenuItem(
+                                    text = { Text(device.optString("name")) },
+                                    onClick = {
+                                        outputMenuExpanded = false
+                                        action("audio.output.select", JSONObject().put("id", device.optLong("id")))
+                                    },
+                                )
+                            }
                         }
                     }
                 }
-            }
-            if (inputDevices.length() > 0) {
-                var inputMenuExpanded by remember { mutableStateOf(false) }
-                val activeInput = (0 until inputDevices.length()).mapNotNull { inputDevices.optJSONObject(it) }
-                    .firstOrNull { it.optBoolean("active") }
-                Box {
-                    Button(onClick = { inputMenuExpanded = true }) {
-                        Text("Input: ${activeInput?.optString("name") ?: "Select device"}")
-                    }
-                    DropdownMenu(expanded = inputMenuExpanded, onDismissRequest = { inputMenuExpanded = false }) {
-                        for (index in 0 until inputDevices.length()) {
-                            val device = inputDevices.optJSONObject(index) ?: continue
-                            DropdownMenuItem(
-                                text = { Text(device.optString("name")) },
-                                onClick = {
-                                    inputMenuExpanded = false
-                                    action("audio.input.select", JSONObject().put("id", device.optLong("id")))
-                                },
-                            )
+                if (inputDevices.length() > 0) {
+                    var inputMenuExpanded by remember { mutableStateOf(false) }
+                    val activeInput = (0 until inputDevices.length()).mapNotNull { inputDevices.optJSONObject(it) }
+                        .firstOrNull { it.optBoolean("active") }
+                    Box {
+                        Button(onClick = { inputMenuExpanded = true }) {
+                            Text("Input: ${activeInput?.optString("name") ?: "Select device"}")
+                        }
+                        DropdownMenu(expanded = inputMenuExpanded, onDismissRequest = { inputMenuExpanded = false }) {
+                            for (index in 0 until inputDevices.length()) {
+                                val device = inputDevices.optJSONObject(index) ?: continue
+                                DropdownMenuItem(
+                                    text = { Text(device.optString("name")) },
+                                    onClick = {
+                                        inputMenuExpanded = false
+                                        action("audio.input.select", JSONObject().put("id", device.optLong("id")))
+                                    },
+                                )
+                            }
                         }
                     }
                 }
+                val initialVolume = audio.optInt("output_volume_percent", 0).coerceIn(0, 100).toFloat()
+                var outputVolume by remember(initialVolume) { mutableFloatStateOf(initialVolume) }
+                Text("Output volume · ${outputVolume.roundToInt()}%", color = SecondaryText)
+                Slider(
+                    modifier = Modifier.semantics { contentDescription = "Output volume" },
+                    value = outputVolume,
+                    onValueChange = { outputVolume = it.coerceIn(0f, 100f) },
+                    onValueChangeFinished = {
+                        action("audio.volume.set", JSONObject().put("percent", outputVolume.roundToInt()))
+                    },
+                    valueRange = 0f..100f,
+                )
+                val outputMuted = if (audio.has("output_muted") && !audio.isNull("output_muted")) {
+                    audio.optBoolean("output_muted")
+                } else null
+                Text(
+                    when (outputMuted) {
+                        true -> "Output muted"
+                        false -> "Output active"
+                        null -> "Output mute state unavailable"
+                    },
+                    color = SecondaryText,
+                )
+                val microphoneMuted = if (audio.has("microphone_muted") && !audio.isNull("microphone_muted")) {
+                    audio.optBoolean("microphone_muted")
+                } else null
+                Text(
+                    when (microphoneMuted) {
+                        true -> "Microphone muted"
+                        false -> "Microphone active"
+                        null -> "Microphone mute state unavailable"
+                    },
+                    color = SecondaryText,
+                )
+            } else {
+                Text("Output volume unavailable", color = SecondaryText)
             }
-            val initialVolume = audio.optInt("output_volume_percent", 0).coerceIn(0, 100).toFloat()
-            var outputVolume by remember(initialVolume) { mutableFloatStateOf(initialVolume) }
-            Text("Output volume · ${outputVolume.roundToInt()}%", color = SecondaryText)
-            Slider(
-                modifier = Modifier.semantics { contentDescription = "Output volume" },
-                value = outputVolume,
-                onValueChange = { outputVolume = it.coerceIn(0f, 100f) },
-                onValueChangeFinished = {
-                    action("audio.volume.set", JSONObject().put("percent", outputVolume.roundToInt()))
-                },
-                valueRange = 0f..100f,
-            )
-            val outputMuted = if (audio.has("output_muted") && !audio.isNull("output_muted")) {
-                audio.optBoolean("output_muted")
-            } else null
-            Text(
-                when (outputMuted) {
-                    true -> "Output muted"
-                    false -> "Output active"
-                    null -> "Output mute state unavailable"
-                },
-                color = SecondaryText,
-            )
-            val microphoneMuted = if (audio.has("microphone_muted") && !audio.isNull("microphone_muted")) {
-                audio.optBoolean("microphone_muted")
-            } else null
-            Text(
-                when (microphoneMuted) {
-                    true -> "Microphone muted"
-                    false -> "Microphone active"
-                    null -> "Microphone mute state unavailable"
-                },
-                color = SecondaryText,
-            )
-        } else {
-            Text("Output volume unavailable", color = SecondaryText)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { action("audio.volume", JSONObject().put("direction", "down")) }) { Text("Volume −") }
-            Button(onClick = { action("audio.volume", JSONObject().put("direction", "up")) }) { Text("Volume +") }
-            val outputMuted = if (audio.has("output_muted") && !audio.isNull("output_muted")) {
-                audio.optBoolean("output_muted")
-            } else null
-            Button(onClick = { action("audio.output_mute", JSONObject()) }) {
-                Text(when (outputMuted) { true -> "Unmute output"; false -> "Mute output"; null -> "Toggle output mute" })
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            val microphoneMuted = if (audio.has("microphone_muted") && !audio.isNull("microphone_muted")) {
-                audio.optBoolean("microphone_muted")
-            } else null
-            Button(onClick = { action("audio.microphone_mute", JSONObject()) }) {
-                Text(when (microphoneMuted) { true -> "Unmute microphone"; false -> "Mute microphone"; null -> "Toggle mic mute" })
-            }
-        }
-        val mediaPlayers = media.optJSONArray("players") ?: JSONArray()
-        if (media.optBoolean("available") && mediaPlayers.length() > 0) {
-            Text("Media players", color = MainText, fontWeight = FontWeight.Medium)
-            for (index in 0 until mediaPlayers.length()) {
-                val player = mediaPlayers.optJSONObject(index) ?: continue
-                val playerId = player.optString("player_id")
-                val playerName = player.optString("name", playerId)
-                Text(playerName + " · " + player.optString("playback_status", "Unknown"), color = SecondaryText)
-                if (player.optString("artwork_id") == artwork?.artworkId) {
-                    Image(
-                        bitmap = artwork.bitmap.asImageBitmap(),
-                        contentDescription = "Album artwork for $playerName",
-                        modifier = Modifier.size(112.dp).clip(RoundedCornerShape(12.dp)),
-                    )
-                }
-                val title = player.optString("title")
-                val artist = player.optString("artist")
-                val album = player.optString("album")
-                if (title.isNotBlank()) Text(title, color = MainText, fontWeight = FontWeight.Medium)
-                val details = listOf(artist, album).filter { it.isNotBlank() }.joinToString(" · ")
-                if (details.isNotBlank()) Text(details, color = SecondaryText)
-                val presentation = mediaPlayerPresentation(player)
-                presentation.positionText?.let { Text(it, color = SecondaryText) }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (presentation.canGoPrevious) Button(onClick = { action("media.previous", JSONObject().put("player_id", playerId)) }) { Text("Previous") }
-                    if (presentation.showPlayPause) Button(onClick = { action("media.play_pause_for", JSONObject().put("player_id", playerId)) }) { Text(presentation.playPauseLabel) }
-                    if (presentation.canGoNext) Button(onClick = { action("media.next", JSONObject().put("player_id", playerId)) }) { Text("Next") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { action("audio.volume", JSONObject().put("direction", "down")) }) { Text("Volume −") }
+                Button(onClick = { action("audio.volume", JSONObject().put("direction", "up")) }) { Text("Volume +") }
+                val outputMuted = if (audio.has("output_muted") && !audio.isNull("output_muted")) {
+                    audio.optBoolean("output_muted")
+                } else null
+                Button(onClick = { action("audio.output_mute", JSONObject()) }) {
+                    Text(when (outputMuted) { true -> "Unmute output"; false -> "Mute output"; null -> "Toggle output mute" })
                 }
             }
-        } else {
-            Text("No media players found", color = SecondaryText)
-            Button(onClick = { action("media.play_pause", JSONObject()) }) { Text("Play / pause") }
-        }
-    }
-    if (capabilities.lockScreen) Card {
-        Text("Session", color = MainText, fontWeight = FontWeight.Medium)
-        Button(onClick = { action("system.lock", JSONObject()) }) { Text("Lock screen") }
-    }
-    Card {
-        Text("Monitor power", color = MainText, fontWeight = FontWeight.Medium)
-        if (monitors.length() == 0) Text("No monitor data", color = SecondaryText)
-        for (i in 0 until monitors.length()) {
-            val monitor = monitors.optJSONObject(i) ?: continue
-            val name = monitor.optString("name")
-            val enabled = monitor.optBoolean("dpms_enabled", true)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Column {
-                    Text(name, color = MainText)
-                    Text(if (enabled) "Display on" else "Display off", color = SecondaryText)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val microphoneMuted = if (audio.has("microphone_muted") && !audio.isNull("microphone_muted")) {
+                    audio.optBoolean("microphone_muted")
+                } else null
+                Button(onClick = { action("audio.microphone_mute", JSONObject()) }) {
+                    Text(when (microphoneMuted) { true -> "Unmute microphone"; false -> "Mute microphone"; null -> "Toggle mic mute" })
                 }
-                if (capabilities.monitorPower) Button(onClick = {
-                    if (enabled) monitorConfirmation = name
-                    else action("monitor.power", JSONObject().put("monitor", name).put("enabled", true))
-                }) { Text(if (enabled) "Turn off" else "Turn on") }
+            }
+            val mediaPlayers = media.optJSONArray("players") ?: JSONArray()
+            if (media.optBoolean("available") && mediaPlayers.length() > 0) {
+                Text("Media players", color = MainText, fontWeight = FontWeight.Medium)
+                for (index in 0 until mediaPlayers.length()) {
+                    val player = mediaPlayers.optJSONObject(index) ?: continue
+                    val playerId = player.optString("player_id")
+                    val playerName = player.optString("name", playerId)
+                    Text(playerName + " · " + player.optString("playback_status", "Unknown"), color = SecondaryText)
+                    if (player.optString("artwork_id") == artwork?.artworkId) {
+                        Image(
+                            bitmap = artwork.bitmap.asImageBitmap(),
+                            contentDescription = "Album artwork for $playerName",
+                            modifier = Modifier.size(112.dp).clip(RoundedCornerShape(12.dp)),
+                        )
+                    }
+                    val title = player.optString("title")
+                    val artist = player.optString("artist")
+                    val album = player.optString("album")
+                    if (title.isNotBlank()) Text(title, color = MainText, fontWeight = FontWeight.Medium)
+                    val details = listOf(artist, album).filter { it.isNotBlank() }.joinToString(" · ")
+                    if (details.isNotBlank()) Text(details, color = SecondaryText)
+                    val presentation = mediaPlayerPresentation(player)
+                    presentation.positionText?.let { Text(it, color = SecondaryText) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (presentation.canGoPrevious) Button(onClick = { action("media.previous", JSONObject().put("player_id", playerId)) }) { Text("Previous") }
+                        if (presentation.showPlayPause) Button(onClick = { action("media.play_pause_for", JSONObject().put("player_id", playerId)) }) { Text(presentation.playPauseLabel) }
+                        if (presentation.canGoNext) Button(onClick = { action("media.next", JSONObject().put("player_id", playerId)) }) { Text("Next") }
+                    }
+                }
+            } else {
+                Text("No media players found", color = SecondaryText)
+                Button(onClick = { action("media.play_pause", JSONObject()) }) { Text("Play / pause") }
             }
         }
-    }
-    Card {
-        Text("Power", color = MainText, fontWeight = FontWeight.Medium)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { powerConfirmation = "suspend" }) { Text("Suspend") }
-            Button(onClick = { powerConfirmation = "shutdown" }) { Text("Shut down") }
-            Button(onClick = { powerConfirmation = "reboot" }) { Text("Reboot") }
+        if (capabilities.lockScreen) Card {
+            Text("Session", color = MainText, fontWeight = FontWeight.Medium)
+            Button(onClick = { action("system.lock", JSONObject()) }) { Text("Lock screen") }
         }
-    }
-    powerConfirmation?.let { requested ->
-        val label = when (requested) { "suspend" -> "Suspend"; "shutdown" -> "Shut down"; else -> "Reboot" }
-        AlertDialog(
-            onDismissRequest = { powerConfirmation = null },
-            title = { Text("$label this computer?") },
-            text = { Text("This will interrupt desktop activity. Confirm only if you intend to continue.") },
-            confirmButton = { Button(onClick = { action("system.power", JSONObject().put("action", requested)); powerConfirmation = null }) { Text(label) } },
-            dismissButton = { Button(onClick = { powerConfirmation = null }) { Text("Cancel") } }
-        )
-    }
-    monitorConfirmation?.let { name ->
-        AlertDialog(
-            onDismissRequest = { monitorConfirmation = null },
-            title = { Text("Turn off $name?") },
-            text = { Text("The display will remain off until it is turned back on or the session wakes it.") },
-            confirmButton = { Button(onClick = { action("monitor.power", JSONObject().put("monitor", name).put("enabled", false)); monitorConfirmation = null }) { Text("Turn off") } },
-            dismissButton = { Button(onClick = { monitorConfirmation = null }) { Text("Cancel") } }
-        )
+        Card {
+            Text("Monitor power", color = MainText, fontWeight = FontWeight.Medium)
+            if (monitors.length() == 0) Text("No monitor data", color = SecondaryText)
+            for (i in 0 until monitors.length()) {
+                val monitor = monitors.optJSONObject(i) ?: continue
+                val name = monitor.optString("name")
+                val enabled = monitor.optBoolean("dpms_enabled", true)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column {
+                        Text(name, color = MainText)
+                        Text(if (enabled) "Display on" else "Display off", color = SecondaryText)
+                    }
+                    if (capabilities.monitorPower) Button(onClick = {
+                        if (enabled) monitorConfirmation = name
+                        else action("monitor.power", JSONObject().put("monitor", name).put("enabled", true))
+                    }) { Text(if (enabled) "Turn off" else "Turn on") }
+                }
+            }
+        }
+        Card {
+            Text("Power", color = MainText, fontWeight = FontWeight.Medium)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { powerConfirmation = "suspend" }) { Text("Suspend") }
+                Button(onClick = { powerConfirmation = "shutdown" }) { Text("Shut down") }
+                Button(onClick = { powerConfirmation = "reboot" }) { Text("Reboot") }
+            }
+        }
+        powerConfirmation?.let { requested ->
+            val label = when (requested) { "suspend" -> "Suspend"; "shutdown" -> "Shut down"; else -> "Reboot" }
+            AlertDialog(
+                onDismissRequest = { powerConfirmation = null },
+                title = { Text("$label this computer?") },
+                text = { Text("This will interrupt desktop activity. Confirm only if you intend to continue.") },
+                confirmButton = { Button(onClick = { action("system.power", JSONObject().put("action", requested)); powerConfirmation = null }) { Text(label) } },
+                dismissButton = { Button(onClick = { powerConfirmation = null }) { Text("Cancel") } }
+            )
+        }
+        monitorConfirmation?.let { name ->
+            AlertDialog(
+                onDismissRequest = { monitorConfirmation = null },
+                title = { Text("Turn off $name?") },
+                text = { Text("The display will remain off until it is turned back on or the session wakes it.") },
+                confirmButton = { Button(onClick = { action("monitor.power", JSONObject().put("monitor", name).put("enabled", false)); monitorConfirmation = null }) { Text("Turn off") } },
+                dismissButton = { Button(onClick = { monitorConfirmation = null }) { Text("Cancel") } }
+            )
+        }
+    } else {
+        Card { Text("Connect a desktop to use system controls", color = SecondaryText) }
     }
 }
 

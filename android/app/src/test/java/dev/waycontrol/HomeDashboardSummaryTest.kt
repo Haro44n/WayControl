@@ -7,6 +7,13 @@ import org.junit.Test
 
 class HomeDashboardSummaryTest {
     @Test
+    fun homeActionsRequireAnAuthenticatedConnectedState() {
+        assertEquals(true, homeActionsEnabled("Connected"))
+        assertEquals(false, homeActionsEnabled("Disconnected"))
+        assertEquals(false, homeActionsEnabled("Connecting"))
+    }
+
+    @Test
     fun summaryShowsActualDesktopOsCompositorWorkspaceAppAndMeasuredLatency() {
         val desktop = JSONObject()
             .put("computer_name", "Cherlove Desktop")

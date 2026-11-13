@@ -2,7 +2,9 @@ package dev.waycontrol
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -39,5 +41,22 @@ class DangerousActionConfirmationTest {
 
         composeRule.onNodeWithText("Shut down this computer?").assertDoesNotExist()
         assertNull(dispatchedAction.get())
+    }
+
+    @Test
+    fun systemPowerControlsAreUnavailableWhenDisconnected() {
+        val dispatchedAction = AtomicReference<String?>(null)
+        composeRule.setContent {
+            MaterialTheme {
+                SystemScreen(JSONObject(), JSONArray(), "Disconnected") { operation, _ ->
+                    dispatchedAction.set(operation)
+                }
+            }
+        }
+
+        composeRule.onAllNodesWithText("Suspend").assertCountEquals(0)
+        composeRule.onAllNodesWithText("Shut down").assertCountEquals(0)
+        composeRule.onNodeWithText("Connect a desktop to use system controls").assertIsDisplayed()
+        composeRule.runOnIdle { assertNull(dispatchedAction.get()) }
     }
 }

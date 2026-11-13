@@ -12,6 +12,8 @@ internal data class HomeDashboardSummary(
     val networkLatency: String,
 )
 
+internal fun homeActionsEnabled(connectionStatus: String): Boolean = connectionStatus == "Connected"
+
 internal fun homeDashboardSummary(
     desktop: JSONObject,
     workspaces: JSONArray,

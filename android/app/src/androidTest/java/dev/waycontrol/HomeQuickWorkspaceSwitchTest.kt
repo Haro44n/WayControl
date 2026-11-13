@@ -121,6 +121,32 @@ class HomeQuickWorkspaceSwitchTest {
     }
 
     @Test
+    fun quickActionsAreDisabledWhileDisconnectedEvenWhenBackendDataIsPresent() {
+        val capabilities = CompositorCapabilities(lockScreen = true, monitors = true, monitorPower = true)
+        composeRule.setContent {
+            MaterialTheme {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    HomeScreen(
+                        "Disconnected", false, null, JSONObject(), workspaces(), JSONArray(), null, false,
+                        capabilities = capabilities,
+                        monitors = JSONArray().put(JSONObject().put("name", "DP-1").put("dpms_enabled", true)),
+                        audio = JSONObject().put("available", true),
+                        media = JSONObject().put("available", true),
+                    ) { }
+                }
+            }
+        }
+
+        composeRule.onNodeWithText("Lock").performScrollTo().assertIsNotEnabled()
+        composeRule.onNodeWithText("Turn off DP-1").performScrollTo().assertIsNotEnabled()
+        composeRule.onNodeWithText("Volume +").performScrollTo().assertIsNotEnabled()
+        composeRule.onNodeWithText("Play / pause").performScrollTo().assertIsNotEnabled()
+        composeRule.onNodeWithText("Suspend").performScrollTo().assertIsNotEnabled()
+        composeRule.onNodeWithText("Reboot").performScrollTo().assertIsNotEnabled()
+        composeRule.onNodeWithText("Shut down").performScrollTo().assertIsNotEnabled()
+    }
+
+    @Test
     fun homeAudioShortcutsStayHiddenWhenBackendIsUnavailable() {
         composeRule.setContent {
             MaterialTheme {
