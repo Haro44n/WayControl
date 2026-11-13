@@ -3,10 +3,11 @@
 use async_trait::async_trait;
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Path, State},
-    http::{HeaderMap, StatusCode, header},
+    extract::{DefaultBodyLimit, Path, Request, State},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
+    middleware::{self, Next},
     response::{
-        IntoResponse,
+        IntoResponse, Response,
         sse::{Event, Sse},
     },
     routing::{get, post},
@@ -156,6 +157,7 @@ pub async fn run_lan_discovery(
 }
 pub const MAX_API_BODY_BYTES: usize = 64 * 1024;
 const MAX_CONCURRENT_API_CONNECTIONS: usize = 64;
+const API_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
 struct ConnectionLimitAcceptor {
@@ -1644,9 +1646,28 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/pair", post(pair))
         .route("/api/v1/pair/{request_id}", get(pair_status))
         .route("/api/v1/request", post(request))
+        .route_layer(middleware::from_fn(api_request_deadline))
         .route("/api/v1/events", get(event_stream))
         .layer(DefaultBodyLimit::max(MAX_API_BODY_BYTES))
         .with_state(state)
+}
+
+async fn api_request_deadline(request: Request, next: Next) -> Response {
+    match tokio::time::timeout(API_REQUEST_TIMEOUT, next.run(request)).await {
+        Ok(response) => response,
+        Err(_) => {
+            let mut response = api_error(
+                StatusCode::REQUEST_TIMEOUT,
+                "request_timeout",
+                "API request exceeded its time limit",
+                "",
+            );
+            response
+                .headers_mut()
+                .insert(header::CONNECTION, HeaderValue::from_static("close"));
+            response
+        }
+    }
 }
 
 async fn event_stream(

@@ -116,6 +116,36 @@ def main():
             assert response.status == 200 and pair_status["status"] == "approved", pair_status
             token = pair_status["token"]
 
+            # A peer must not hold one of the bounded TLS slots forever by
+            # declaring a large JSON body and then sending only its prefix.
+            slow_body = open_idle_tls(tls, port)
+            slow_body.settimeout(12)
+            slow_body.sendall(
+                b"POST /api/v1/pair HTTP/1.1\r\n"
+                b"Host: 127.0.0.1\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Content-Length: 60000\r\n"
+                b"Connection: keep-alive\r\n\r\n"
+                b'{"code":"'
+            )
+            try:
+                slow_response = bytearray(slow_body.recv(4096))
+            except TimeoutError as error:
+                raise AssertionError("server left an incomplete JSON request open") from error
+            assert slow_response.startswith(b"HTTP/1.1 408"), (
+                "incomplete JSON request did not return HTTP 408: "
+                + bytes(slow_response[:256]).decode(errors="replace")
+            )
+            assert b"connection: close" in slow_response.lower(), (
+                "timed-out request did not ask the peer to close the connection"
+            )
+            slow_body.settimeout(2)
+            try:
+                assert slow_body.recv(1) == b"", "timed-out request connection remained open"
+            except (ConnectionResetError, ssl.SSLError):
+                pass
+            slow_body.close()
+
             # Completed TLS sessions that never send HTTP must still consume a
             # bounded slot so unauthenticated clients cannot exhaust daemon FDs.
             idle_connections = []
@@ -202,7 +232,10 @@ def main():
             result = json.loads(response.read())
             fresh.close()
             assert response.status == 200 and result["success"], "fresh connection failed after framing probe"
-            print("PASS: pairing, 64-connection cap and recovery, authenticated ping, and HTTP framing rejection")
+            print(
+                "PASS: pairing, incomplete-body timeout, 64-connection cap and recovery, "
+                "authenticated ping, and HTTP framing rejection"
+            )
         finally:
             proc.terminate()
             try:
