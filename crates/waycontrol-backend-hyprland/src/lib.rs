@@ -83,12 +83,35 @@ impl HyprlandAdapter {
         }
     }
 
+    async fn negotiate_event_capability(&self) -> bool {
+        let probe = async {
+            self.client()?
+                .connect_events()
+                .await
+                .map_err(|error| error.to_string())
+        };
+        let events_available = matches!(
+            tokio::time::timeout(Duration::from_secs(2), probe).await,
+            Ok(Ok(_))
+        );
+        self.capabilities
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .events = events_available;
+        events_available
+    }
+
     /// Keep the daemon available if the compositor starts after the user service.
     pub fn retry_negotiation_until_ready(&self) {
         let adapter = self.clone();
         tokio::spawn(async move {
             loop {
-                if adapter.negotiate_capabilities().await {
+                let ready = if adapter.capabilities().workspaces {
+                    adapter.negotiate_event_capability().await
+                } else {
+                    adapter.negotiate_capabilities().await
+                };
+                if ready {
                     break;
                 }
                 tokio::time::sleep(Duration::from_secs(2)).await;
@@ -229,7 +252,15 @@ impl CompositorBackend for HyprlandAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{os::unix::net::UnixListener as StdUnixListener, path::Path, time::SystemTime};
+    use std::{
+        os::unix::net::UnixListener as StdUnixListener,
+        path::Path,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::SystemTime,
+    };
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::UnixListener,
@@ -238,15 +269,22 @@ mod tests {
     fn start_mock_hyprland_ipc(
         socket_dir: &Path,
         with_events: bool,
-    ) -> (tokio::task::JoinHandle<()>, Option<UnixListener>) {
+    ) -> (
+        tokio::task::JoinHandle<()>,
+        Option<UnixListener>,
+        Arc<AtomicUsize>,
+    ) {
         let ipc = UnixListener::bind(socket_dir.join(".socket.sock")).unwrap();
         let events =
             with_events.then(|| UnixListener::bind(socket_dir.join(".socket2.sock")).unwrap());
+        let requests = Arc::new(AtomicUsize::new(0));
+        let request_count = Arc::clone(&requests);
         let ipc_task = tokio::spawn(async move {
             loop {
                 let (mut stream, _) = ipc.accept().await.unwrap();
                 let mut request = [0_u8; 64];
                 let size = stream.read(&mut request).await.unwrap();
+                request_count.fetch_add(1, Ordering::Relaxed);
                 let response = match &request[..size] {
                     b"j/version" => r#"{"tag":"0.50.0"}"#,
                     b"j/workspaces" => "[]",
@@ -260,7 +298,7 @@ mod tests {
                 stream.shutdown().await.unwrap();
             }
         });
-        (ipc_task, events)
+        (ipc_task, events, requests)
     }
 
     #[test]
@@ -309,7 +347,7 @@ mod tests {
             std::process::id()
         ));
         std::fs::create_dir(&socket_dir).unwrap();
-        let (ipc_task, events) = start_mock_hyprland_ipc(&socket_dir, true);
+        let (ipc_task, events, _) = start_mock_hyprland_ipc(&socket_dir, true);
         let backend = HyprlandAdapter {
             client: Some(HyprlandClient::at_socket_dir(socket_dir.clone())),
             version: Arc::new(OnceLock::new()),
@@ -354,7 +392,7 @@ mod tests {
 
         std::fs::remove_file(socket_dir.join(".socket.sock")).unwrap();
         std::fs::remove_file(socket_dir.join(".socket2.sock")).unwrap();
-        let (ipc_task, events) = start_mock_hyprland_ipc(&socket_dir, true);
+        let (ipc_task, events, _) = start_mock_hyprland_ipc(&socket_dir, true);
         tokio::time::timeout(Duration::from_secs(4), async {
             while !backend.capabilities().workspaces {
                 tokio::time::sleep(Duration::from_millis(20)).await;
@@ -379,7 +417,7 @@ mod tests {
             std::process::id()
         ));
         std::fs::create_dir(&socket_dir).unwrap();
-        let (ipc_task, _) = start_mock_hyprland_ipc(&socket_dir, false);
+        let (ipc_task, _, requests) = start_mock_hyprland_ipc(&socket_dir, false);
         let backend = HyprlandAdapter {
             client: Some(HyprlandClient::at_socket_dir(socket_dir.clone())),
             version: Arc::new(OnceLock::new()),
@@ -389,9 +427,11 @@ mod tests {
         assert!(!backend.negotiate_capabilities().await);
         assert!(backend.capabilities().workspaces);
         assert!(!backend.capabilities().events);
+        assert_eq!(requests.load(Ordering::Relaxed), 10);
         backend.retry_negotiation_until_ready();
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(!backend.capabilities().events);
+        assert_eq!(requests.load(Ordering::Relaxed), 10);
         let events = UnixListener::bind(socket_dir.join(".socket2.sock")).unwrap();
         tokio::time::timeout(Duration::from_secs(4), async {
             while !backend.capabilities().events {
@@ -400,6 +440,7 @@ mod tests {
         })
         .await
         .expect("background negotiation should discover the late event socket");
+        assert_eq!(requests.load(Ordering::Relaxed), 10);
 
         ipc_task.abort();
         drop(events);
