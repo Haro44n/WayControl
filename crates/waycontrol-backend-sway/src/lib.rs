@@ -376,7 +376,7 @@ impl CompositorBackend for SwayAdapter {
             windows: true,
             focus_window: true,
             move_window: true,
-            move_window_to_monitor: false,
+            move_window_to_monitor: true,
             toggle_floating: true,
             toggle_fullscreen: true,
             toggle_pinned: false,
@@ -407,6 +407,27 @@ impl CompositorBackend for SwayAdapter {
             "[con_id={}] move container to workspace {}",
             self.id(id)?,
             Self::quote(workspace_id.as_str())?
+        ))
+        .await
+    }
+    async fn move_window_to_monitor(&self, id: &str, monitor: &str) -> Result<(), String> {
+        let id = self.id(id)?;
+        let outputs = self.request(GET_OUTPUTS, &[]).await?;
+        let outputs = outputs
+            .as_array()
+            .ok_or_else(|| "invalid Sway output response".to_owned())?;
+        if !outputs
+            .iter()
+            .any(|output| output.get("name").and_then(Value::as_str) == Some(monitor))
+        {
+            return Err("unknown Sway output".into());
+        }
+        if matches!(monitor, "*" | "-" | "--") {
+            return Err("moving a window requires a specific Sway output".into());
+        }
+        self.command(format!(
+            "[con_id={id}] move container to output {}",
+            Self::quote(monitor)?
         ))
         .await
     }
@@ -501,7 +522,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires a live Sway compositor and WAYCONTROL_TEST_LIVE_SWAY=1"]
-    async fn live_sway_supports_workspace_window_monitor_power_and_event_operations() {
+    async fn live_sway_supports_workspace_window_monitor_move_power_and_event_operations() {
         assert_eq!(
             std::env::var("WAYCONTROL_TEST_LIVE_SWAY").as_deref(),
             Ok("1"),
@@ -516,6 +537,7 @@ mod tests {
         let output_name = monitors[0].name.clone();
         assert_eq!(monitors[0].dpms_enabled, Some(true));
         assert!(adapter.capabilities().monitor_power);
+        assert!(adapter.capabilities().move_window_to_monitor);
         adapter
             .set_monitor_power(&output_name, false)
             .await
@@ -615,6 +637,10 @@ mod tests {
             .move_window(&window.address, &target)
             .await
             .expect("move the test window to the named workspace");
+        adapter
+            .move_window_to_monitor(&window.address, &output_name)
+            .await
+            .expect("move the test window to the known Sway output");
         adapter
             .focus_window(&window.address)
             .await
@@ -858,9 +884,68 @@ mod tests {
         std::fs::remove_file(path).unwrap();
     }
 
+    #[tokio::test]
+    async fn move_window_to_monitor_validates_output_and_uses_quoted_sway_command() {
+        let (path, listener) = mock_socket().await;
+        let peer = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (kind, _) = receive_request(&mut stream).await;
+            assert_eq!(kind, GET_OUTPUTS);
+            reply(&mut stream, GET_OUTPUTS, br#"[{"name":"DP-1"}]"#).await;
+
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (kind, command) = receive_request(&mut stream).await;
+            assert_eq!(kind, RUN_COMMAND);
+            assert_eq!(command, br#"[con_id=42] move container to output "DP-1""#);
+            reply(&mut stream, RUN_COMMAND, br#"[{"success":true}]"#).await;
+        });
+        let adapter = SwayAdapter {
+            socket: Some(path.clone()),
+        };
+
+        adapter
+            .move_window_to_monitor("sway:42", "DP-1")
+            .await
+            .unwrap();
+
+        peer.await.unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn move_window_to_monitor_rejects_outputs_not_in_the_live_output_list() {
+        let (path, listener) = mock_socket().await;
+        let peer = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (kind, _) = receive_request(&mut stream).await;
+            assert_eq!(kind, GET_OUTPUTS);
+            reply(&mut stream, GET_OUTPUTS, br#"[{"name":"DP-1"}]"#).await;
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(50), listener.accept())
+                    .await
+                    .is_err(),
+                "an unlisted output must not reach RUN_COMMAND"
+            );
+        });
+        let adapter = SwayAdapter {
+            socket: Some(path.clone()),
+        };
+
+        let error = adapter
+            .move_window_to_monitor("sway:42", "DP-2")
+            .await
+            .unwrap_err();
+
+        assert!(error.contains("unknown Sway output"), "{error}");
+        peer.await.unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
     #[test]
-    fn sway_advertises_monitor_power_control() {
-        assert!(SwayAdapter { socket: None }.capabilities().monitor_power);
+    fn sway_advertises_monitor_power_and_cross_output_move() {
+        let capabilities = SwayAdapter { socket: None }.capabilities();
+        assert!(capabilities.monitor_power);
+        assert!(capabilities.move_window_to_monitor);
     }
 
     #[tokio::test]
