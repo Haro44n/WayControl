@@ -426,8 +426,64 @@ fn data_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
 fn resolve_data_dir(base: &std::path::Path) -> std::io::Result<PathBuf> {
     let current = base.join("waycontrol");
     let legacy = base.join("hyprcontrol");
-    if !current.exists() && legacy.exists() {
-        fs::rename(legacy, &current)?;
+    let legacy_metadata = match fs::symlink_metadata(&legacy) {
+        Ok(metadata) => Some(metadata),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error),
+    };
+    if let Some(legacy_metadata) = legacy_metadata {
+        if !legacy_metadata.file_type().is_dir() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "legacy WayControl data path is not a directory: {}",
+                    legacy.display()
+                ),
+            ));
+        }
+
+        let current_metadata = match fs::symlink_metadata(&current) {
+            Ok(metadata) => Some(metadata),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        if current_metadata.is_none() {
+            fs::rename(&legacy, &current)?;
+        } else {
+            if !current_metadata
+                .as_ref()
+                .is_some_and(|metadata| metadata.file_type().is_dir())
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    format!(
+                        "WayControl data path is not a directory: {}",
+                        current.display()
+                    ),
+                ));
+            }
+
+            let entries = fs::read_dir(&legacy)?.collect::<Result<Vec<_>, _>>()?;
+            for entry in &entries {
+                let destination = current.join(entry.file_name());
+                match fs::symlink_metadata(&destination) {
+                    Ok(_) => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::AlreadyExists,
+                            format!("cannot migrate legacy data over {}", destination.display()),
+                        ));
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                }
+            }
+            for entry in entries {
+                fs::rename(entry.path(), current.join(entry.file_name()))?;
+            }
+            // A sandbox may make the parent configuration directory read-only,
+            // preventing removal of the now-empty legacy directory.
+            let _ = fs::remove_dir(&legacy);
+        }
     }
     Ok(current)
 }
@@ -505,6 +561,34 @@ mod tests {
             b"[]"
         );
         assert!(!legacy.exists());
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn migrates_legacy_files_into_an_empty_precreated_waycontrol_directory() {
+        let unique = format!(
+            "waycontrol-precreated-migration-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let base = std::env::temp_dir().join(unique);
+        let current = base.join("waycontrol");
+        let legacy = base.join("hyprcontrol");
+        fs::create_dir_all(&current).unwrap();
+        fs::create_dir_all(&legacy).unwrap();
+        fs::write(legacy.join("trusted-devices.json"), b"[]").unwrap();
+
+        let resolved = resolve_data_dir(&base).unwrap();
+
+        assert_eq!(resolved, current);
+        assert_eq!(
+            fs::read(current.join("trusted-devices.json")).unwrap(),
+            b"[]"
+        );
+        assert!(!legacy.join("trusted-devices.json").exists());
         fs::remove_dir_all(base).unwrap();
     }
 
