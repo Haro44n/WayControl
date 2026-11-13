@@ -2,7 +2,12 @@
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use std::{env, path::PathBuf};
+use std::{
+    env,
+    os::unix::fs::{FileTypeExt, MetadataExt},
+    path::PathBuf,
+    time::Duration,
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{UnixStream, unix::OwnedReadHalf},
@@ -19,6 +24,8 @@ const GET_WORKSPACES: u32 = 1;
 const SUBSCRIBE: u32 = 2;
 const GET_OUTPUTS: u32 = 3;
 const GET_TREE: u32 = 4;
+const MAX_SOCKET_DISCOVERY_CANDIDATES: usize = 8;
+const SOCKET_DISCOVERY_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 const RUN_COMMAND: u32 = 0;
 
 #[derive(Clone, Debug)]
@@ -38,6 +45,69 @@ impl SwayAdapter {
 
     pub fn from_env_or_unavailable() -> Self {
         Self::from_env().unwrap_or(Self { socket: None })
+    }
+
+    pub async fn from_env_or_discover() -> Self {
+        if let Some(path) = env::var_os("SWAYSOCK")
+            && let Some(adapter) = Self::connect_candidates(vec![PathBuf::from(path)]).await
+        {
+            return adapter;
+        }
+        Self::discover_active_session()
+            .await
+            .unwrap_or(Self { socket: None })
+    }
+
+    pub async fn discover_active_session() -> Option<Self> {
+        let runtime_dir = env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from)?;
+        let runtime_metadata = std::fs::metadata(&runtime_dir).ok()?;
+        let process_metadata = std::fs::metadata("/proc/self").ok()?;
+        if !runtime_metadata.is_dir() || runtime_metadata.uid() != process_metadata.uid() {
+            return None;
+        }
+
+        let prefix = format!("sway-ipc.{}.", runtime_metadata.uid());
+        let mut candidates = std::fs::read_dir(runtime_dir)
+            .ok()?
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let file_type = entry.file_type().ok()?;
+                if !file_type.is_socket() {
+                    return None;
+                }
+                let name = entry.file_name();
+                let name = name.to_str()?;
+                let pid = name
+                    .strip_prefix(&prefix)?
+                    .strip_suffix(".sock")?
+                    .parse::<u32>()
+                    .ok()?;
+                (pid > 0).then_some((pid, entry.path()))
+            })
+            .collect::<Vec<_>>();
+        if candidates.len() > MAX_SOCKET_DISCOVERY_CANDIDATES {
+            return None;
+        }
+        candidates.sort_by_key(|(pid, _)| std::cmp::Reverse(*pid));
+        Self::connect_candidates(candidates.into_iter().map(|(_, path)| path).collect()).await
+    }
+
+    async fn connect_candidates(paths: Vec<PathBuf>) -> Option<Self> {
+        let mut connected = None;
+        for path in paths {
+            let adapter = Self { socket: Some(path) };
+            if matches!(
+                tokio::time::timeout(SOCKET_DISCOVERY_PROBE_TIMEOUT, adapter.workspace_values())
+                    .await,
+                Ok(Ok(_))
+            ) {
+                if connected.is_some() {
+                    return None;
+                }
+                connected = Some(adapter);
+            }
+        }
+        connected
     }
 
     pub async fn connect_to(socket: impl Into<PathBuf>) -> Result<Self, String> {

@@ -66,6 +66,8 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: dbus-run-session -- cargo test --workspace
       - run: cargo build --workspace --release
+      - name: Discover Sway IPC without imported session variables
+        run: python3 scripts/test-sway-socket-discovery.py
       - name: Exercise authenticated HTTP framing under TLS
         run: python3 scripts/test-http-framing.py
 

@@ -493,6 +493,15 @@ impl WaylandBackend {
                 Ok(Err(_)) | Err(_) => Self::Unsupported(CompositorInfo::detected(kind)),
             };
         }
+        if kind == CompositorKind::Sway {
+            return Self::Sway(SwayAdapter::from_env_or_discover().await);
+        }
+        if kind == CompositorKind::Unknown
+            && !discovered_hyprland
+            && let Some(adapter) = SwayAdapter::discover_active_session().await
+        {
+            return Self::Sway(adapter);
+        }
         Self::for_detected_kind(kind, discovered_hyprland)
     }
 
