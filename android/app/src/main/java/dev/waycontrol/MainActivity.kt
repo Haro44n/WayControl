@@ -99,7 +99,7 @@ class MainActivity : ComponentActivity() {
 
 internal enum class Destination(val label: String, val glyph: String) {
     Home("Home", "⌂"), Workspaces("Workspaces", "▦"), Windows("Windows", "▣"),
-    System("System", "◷"), Automation("Profiles", "⚡"), Settings("Settings", "⚙")
+    System("System", "◷"), Settings("Settings", "⚙")
 }
 
 internal fun visibleDestinations(capabilities: CompositorCapabilities): List<Destination> = buildList {
@@ -107,7 +107,6 @@ internal fun visibleDestinations(capabilities: CompositorCapabilities): List<Des
     if (capabilities.workspaces) add(Destination.Workspaces)
     if (capabilities.windows) add(Destination.Windows)
     add(Destination.System)
-    add(Destination.Automation)
     add(Destination.Settings)
 }
 
@@ -129,6 +128,7 @@ internal fun WayControlApp(store: SecureConnectionStore) {
         )
     }
     var selected by rememberSaveable { mutableStateOf(Destination.Home) }
+    var showingAutomationProfiles by rememberSaveable { mutableStateOf(false) }
     var showWelcome by rememberSaveable { mutableStateOf<Boolean?>(null) }
     var endpoint by rememberSaveable { mutableStateOf("") }
     var pin by rememberSaveable { mutableStateOf("") }
@@ -394,7 +394,10 @@ internal fun WayControlApp(store: SecureConnectionStore) {
                 if (showWelcome == false) {
                 NavigationBar(containerColor = Background, windowInsets = WindowInsets.navigationBars) {
                     destinations.forEach { destination ->
-                        NavigationBarItem(selected = selected == destination, onClick = { selected = destination },
+                        NavigationBarItem(selected = selected == destination, onClick = {
+                            selected = destination
+                            showingAutomationProfiles = false
+                        },
                             icon = { Text(destination.glyph, style = MaterialTheme.typography.titleMedium) },
                             label = { Text(destination.label, maxLines = 1) })
                     }
@@ -423,7 +426,7 @@ internal fun WayControlApp(store: SecureConnectionStore) {
                     Destination.System -> SystemScreenWithHistory(snapshot.desktop, snapshot.monitors, status, capabilities, snapshot.audio, snapshot.media, telemetryHistory, mediaArtwork) { operation, payload ->
                         sendDesktopAction(operation, payload)
                     }
-                    Destination.Automation -> AutomationScreen(
+                    Destination.Settings -> if (showingAutomationProfiles) AutomationScreen(
                         profiles = automationProfiles,
                         result = automationResult,
                         connected = automationActionsEnabled(status, token != null),
@@ -444,8 +447,8 @@ internal fun WayControlApp(store: SecureConnectionStore) {
                             if (profileRequiresConfirmation(profile)) profileConfirmation = profile
                             else runAutomation(profile, confirmed = true)
                         },
-                    )
-                    Destination.Settings -> SettingsScreen(
+                        onBack = { showingAutomationProfiles = false },
+                    ) else SettingsScreen(
                         endpoint, { endpoint = it }, pin, { pin = it }, code, { code = it }, status, error, loading,
                         refreshInterval = refreshInterval,
                         onRefreshIntervalChange = { next ->
@@ -456,6 +459,7 @@ internal fun WayControlApp(store: SecureConnectionStore) {
                         discoveryStatus = discoveryStatus,
                         discovering = discovering,
                         scanningQr = scanningQr,
+                        onOpenAutomation = { showingAutomationProfiles = true },
                         onScanQr = {
                             scanningQr = true
                             val options = GmsBarcodeScannerOptions.Builder()
@@ -1156,13 +1160,14 @@ private fun HomeQuickActions(
     scanningQr: Boolean, onScanQr: () -> Unit,
     onDisconnect: () -> Unit, store: SecureConnectionStore, setToken: (String) -> Unit,
     setStatus: (String) -> Unit, setError: (String?) -> Unit, setLoading: (Boolean) -> Unit,
-    welcome: Boolean = false, onSkipWelcome: () -> Unit = {}) {
+    welcome: Boolean = false, onSkipWelcome: () -> Unit = {}, onOpenAutomation: () -> Unit = {}) {
     if (welcome) {
         Header("Welcome to WayControl", "Securely connect your Linux desktop")
         Text("Find your desktop, verify its certificate, and approve pairing in the Linux terminal.", color = SecondaryText)
         Button(onClick = onSkipWelcome, enabled = !loading) { Text("Continue without pairing") }
     } else {
         Header("Settings", "Secure desktop connection")
+        AutomationSettingsEntry(onOpenAutomation)
         TelemetryRefreshSection(refreshInterval, onRefreshIntervalChange)
     }
     Text("Scan the pairing QR shown by the trusted Linux terminal, or enter the HTTPS address, certificate fingerprint, and short-lived code manually. Approve the request in the Linux terminal.", color = SecondaryText)
@@ -1186,9 +1191,11 @@ internal fun AutomationScreen(
     onSave: (AutomationProfile) -> Unit,
     onDelete: (AutomationProfile) -> Unit,
     onRun: (AutomationProfile) -> Unit,
+    onBack: () -> Unit = {},
 ) {
     var editing by remember { mutableStateOf<AutomationProfile?>(null) }
     Header("Automation profiles", "Run ordered, approved desktop actions")
+    Button(onClick = onBack) { Text("Back to Settings") }
     Text(
         "Profiles stay on this device. Actions call WayControl's typed operations; profile text is never run as a shell command.",
         color = SecondaryText,
@@ -1254,6 +1261,17 @@ internal fun AutomationScreen(
                 editing = null
             },
         )
+    }
+}
+
+@Composable
+internal fun AutomationSettingsEntry(onOpenAutomation: () -> Unit) {
+    Card {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Automation profiles", color = MainText, fontWeight = FontWeight.Medium)
+            Text("Manage saved Gaming, Development, Away, Eco, and custom actions.", color = SecondaryText)
+            Button(onClick = onOpenAutomation) { Text("Manage automation profiles") }
+        }
     }
 }
 

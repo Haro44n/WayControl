@@ -16,6 +16,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -50,6 +51,19 @@ class AutomationProfilesUiTest {
         }
 
         composeRule.onNodeWithText("Run").performScrollTo().assertIsNotEnabled()
+    }
+
+    @Test
+    fun settingsEntryOpensAutomationProfiles() {
+        val opened = AtomicReference(false)
+        composeRule.setContent {
+            MaterialTheme {
+                AutomationSettingsEntry { opened.set(true) }
+            }
+        }
+
+        composeRule.onNodeWithText("Manage automation profiles").performClick()
+        composeRule.runOnIdle { assertTrue(opened.get()) }
     }
 
     @Test

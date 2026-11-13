@@ -11,7 +11,6 @@ class SystemControlsRefreshTest {
         assertTrue(shouldRefreshSystemControls(Destination.System))
         assertFalse(shouldRefreshSystemControls(Destination.Workspaces))
         assertFalse(shouldRefreshSystemControls(Destination.Windows))
-        assertFalse(shouldRefreshSystemControls(Destination.Automation))
         assertFalse(shouldRefreshSystemControls(Destination.Settings))
     }
 }
