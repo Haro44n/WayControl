@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Path, Request, State},
+    extract::{ConnectInfo, DefaultBodyLimit, Path, Request, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     middleware::{self, Next},
     response::{
@@ -63,6 +63,7 @@ const PAIRING_TTL: Duration = Duration::from_secs(180);
 const PENDING_PAIR_TTL: Duration = Duration::from_secs(300);
 const PAIRING_RATE_WINDOW: Duration = Duration::from_secs(60);
 const PAIRING_ATTEMPT_LIMIT: u8 = 8;
+const MAX_PAIRING_RATE_CLIENTS: usize = 256;
 const API_REQUESTS_PER_DEVICE_PER_SECOND: u16 = 30;
 const EVENT_REAUTH_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_EVENT_BYTES: usize = 8192;
@@ -1260,14 +1261,18 @@ struct PairingState {
     code: String,
     code_expires: tokio::time::Instant,
     pending: Vec<PendingRecord>,
-    attempts: u8,
-    attempt_window: tokio::time::Instant,
+}
+
+struct PairingAttemptWindow {
+    started: tokio::time::Instant,
+    count: u8,
 }
 
 struct Inner {
     compositor: Arc<dyn CompositorBackend>,
     system: Arc<dyn SystemControlBackend>,
     pairing: Mutex<PairingState>,
+    pairing_attempts: Mutex<HashMap<IpAddr, PairingAttemptWindow>>,
     devices: Mutex<Vec<TrustedDevice>>,
     device_file: PathBuf,
     event_slots: Arc<Semaphore>,
@@ -1316,9 +1321,8 @@ impl AppState {
                 code,
                 code_expires: now + PAIRING_TTL,
                 pending: Vec::new(),
-                attempts: 0,
-                attempt_window: now,
             }),
+            pairing_attempts: Mutex::new(HashMap::new()),
             devices: Mutex::new(devices),
             device_file,
             event_slots: Arc::new(Semaphore::new(4)),
@@ -1349,16 +1353,7 @@ impl AppState {
         let mut state = self.0.pairing.lock().await;
         let now = tokio::time::Instant::now();
         if now >= state.code_expires || !constant_time_eq(code.as_bytes(), state.code.as_bytes()) {
-            if now.saturating_duration_since(state.attempt_window) >= PAIRING_RATE_WINDOW {
-                state.attempt_window = now;
-                state.attempts = 0;
-            }
-            state.attempts = state.attempts.saturating_add(1);
-            return if state.attempts > PAIRING_ATTEMPT_LIMIT {
-                Err(PairingError::RateLimited)
-            } else {
-                Err(PairingError::InvalidCode)
-            };
+            return Err(PairingError::InvalidCode);
         }
         state.code_expires = now;
         let request_id = random_hex(16)?;
@@ -1374,6 +1369,37 @@ impl AppState {
             expires_at: now + PENDING_PAIR_TTL,
         });
         Ok(request_id)
+    }
+
+    async fn allow_pairing_attempt(&self, source: IpAddr) -> bool {
+        let now = tokio::time::Instant::now();
+        let source = match source {
+            IpAddr::V6(address) => address
+                .to_ipv4_mapped()
+                .map(IpAddr::V4)
+                .unwrap_or(IpAddr::V6(address)),
+            address => address,
+        };
+        let mut attempts = self.0.pairing_attempts.lock().await;
+        attempts.retain(|_, window| {
+            now.saturating_duration_since(window.started) < PAIRING_RATE_WINDOW
+        });
+        if !attempts.contains_key(&source) && attempts.len() >= MAX_PAIRING_RATE_CLIENTS {
+            return false;
+        }
+        let window = attempts.entry(source).or_insert(PairingAttemptWindow {
+            started: now,
+            count: 0,
+        });
+        if now.saturating_duration_since(window.started) >= PAIRING_RATE_WINDOW {
+            window.started = now;
+            window.count = 0;
+        }
+        if window.count >= PAIRING_ATTEMPT_LIMIT {
+            return false;
+        }
+        window.count += 1;
+        true
     }
 
     pub async fn pairing_status(
@@ -1816,8 +1842,12 @@ async fn read_bounded_line<R: AsyncBufRead + Unpin>(
 
 async fn pair(
     State(state): State<AppState>,
+    ConnectInfo(source): ConnectInfo<SocketAddr>,
     Json(request): Json<PairRequest>,
 ) -> impl IntoResponse {
+    if !state.allow_pairing_attempt(source.ip()).await {
+        return pairing_error(PairingError::RateLimited).into_response();
+    }
     match state
         .begin_pairing(&request.code, &request.device_name)
         .await
@@ -2661,7 +2691,7 @@ pub fn tls_server(
         .map(|acceptor| {
             acceptor.acceptor(ConnectionLimitAcceptor::new(MAX_CONCURRENT_API_CONNECTIONS))
         })
-        .serve(router(state).into_make_service())
+        .serve(router(state).into_make_service_with_connect_info::<SocketAddr>())
 }
 
 #[cfg(test)]
@@ -3510,42 +3540,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn valid_pairing_code_still_works_after_invalid_attempt_limit() {
-        let (state, path) = test_state().await;
-        let info = state.pairing_info().await.unwrap();
-        let mut wrong_code = info.code.clone().into_bytes();
-        wrong_code[0] = if wrong_code[0] == b'0' { b'1' } else { b'0' };
-        let wrong_code = String::from_utf8(wrong_code).unwrap();
-
-        for _ in 0..PAIRING_ATTEMPT_LIMIT {
-            assert_eq!(
-                state.begin_pairing(&wrong_code, "phone").await.unwrap_err(),
-                PairingError::InvalidCode
-            );
-        }
-        assert_eq!(
-            state.begin_pairing(&wrong_code, "phone").await.unwrap_err(),
-            PairingError::RateLimited
-        );
-        assert!(state.begin_pairing(&info.code, "phone").await.is_ok());
-
-        let _ = std::fs::remove_dir_all(path);
-    }
-
-    #[tokio::test]
-    async fn pairing_route_allows_live_code_after_invalid_attempts_are_rate_limited() {
+    async fn pairing_attempts_from_one_ip_do_not_block_another_ip() {
         let (state, path) = test_state().await;
         let info = state.pairing_info().await.unwrap();
         let mut wrong_code = info.code.clone().into_bytes();
         wrong_code[0] = if wrong_code[0] == b'0' { b'1' } else { b'0' };
         let wrong_code = String::from_utf8(wrong_code).unwrap();
         let app = router(state);
+        let noisy_client = SocketAddr::from(([192, 0, 2, 11], 40001));
+        let owner = SocketAddr::from(([192, 0, 2, 10], 40000));
 
         for _ in 0..PAIRING_ATTEMPT_LIMIT {
             let response = app
                 .clone()
                 .oneshot(
                     Request::post("/api/v1/pair")
+                        .extension(ConnectInfo(noisy_client))
                         .header(header::CONTENT_TYPE, "application/json")
                         .body(Body::from(format!(
                             r#"{{"code":"{wrong_code}","device_name":"phone"}}"#
@@ -3561,6 +3571,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::post("/api/v1/pair")
+                    .extension(ConnectInfo(noisy_client))
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(format!(
                         r#"{{"code":"{wrong_code}","device_name":"phone"}}"#
@@ -3574,6 +3585,7 @@ mod tests {
         let response = app
             .oneshot(
                 Request::post("/api/v1/pair")
+                    .extension(ConnectInfo(owner))
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(format!(
                         r#"{{"code":"{}","device_name":"phone"}}"#,
@@ -3584,6 +3596,68 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[tokio::test]
+    async fn pairing_attempt_limit_applies_to_the_client_address() {
+        let (state, path) = test_state().await;
+        let info = state.pairing_info().await.unwrap();
+        let mut wrong_code = info.code.clone().into_bytes();
+        wrong_code[0] = if wrong_code[0] == b'0' { b'1' } else { b'0' };
+        let wrong_code = String::from_utf8(wrong_code).unwrap();
+        let app = router(state);
+        let owner = SocketAddr::from(([192, 0, 2, 10], 40000));
+        let attacker = SocketAddr::from(([192, 0, 2, 11], 40001));
+
+        for _ in 0..PAIRING_ATTEMPT_LIMIT {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::post("/api/v1/pair")
+                        .extension(axum::extract::ConnectInfo(attacker))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(format!(
+                            r#"{{"code":"{wrong_code}","device_name":"phone"}}"#
+                        )))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        let blocked = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/pair")
+                    .extension(axum::extract::ConnectInfo(attacker))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"code":"{}","device_name":"phone"}}"#,
+                        info.code
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(blocked.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        let allowed = app
+            .oneshot(
+                Request::post("/api/v1/pair")
+                    .extension(axum::extract::ConnectInfo(owner))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"code":"{}","device_name":"phone"}}"#,
+                        info.code
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(allowed.status(), StatusCode::ACCEPTED);
 
         let _ = std::fs::remove_dir_all(path);
     }

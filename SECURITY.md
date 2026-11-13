@@ -5,7 +5,7 @@
 - The daemon uses HTTPS with a persistent self-signed server certificate. Android requires the exact SHA-256 leaf-certificate fingerprint supplied through the local CLI and retains the platform hostname check.
 - All desktop API operations require a randomly generated bearer credential. Pairing requires a short-lived code and explicit interactive approval from the Linux user's local CLI.
 - Linux stores only a SHA-256 digest of each device credential. The device database and TLS private key live under the user's configuration directory with restrictive permissions. Android encrypts the credential with AES-GCM and a non-exportable Android Keystore key.
-- Pairing attempts are rate-limited, pending requests and codes expire, API bodies are capped at 64 KiB, and revocation invalidates a device credential.
+- Unauthenticated pairing requests are limited to eight per source IP per 60 seconds, with a bounded table of 256 recent client addresses. Pending requests and codes expire, API bodies are capped at 64 KiB, and revocation invalidates a device credential.
 - Remote actions are represented by typed protocol operations and validated identifiers. No arbitrary command or shell operation is exposed. System actions use fixed executable names and argument allowlists; closing windows, powering off monitors, and system power actions require Android confirmation.
 - The authenticated Hyprland event stream is bounded to four concurrent clients and limits event lines to 8 KiB.
 - Local approval, listing, and revocation use a mode-0600 Unix socket in the user's runtime directory. The server binds to loopback by default.
