@@ -335,6 +335,7 @@ mod tests {
         version: u32,
         calls: Vec<String>,
         workspaces_json: Option<String>,
+        windows_json: Option<String>,
     }
 
     #[zbus::interface(name = "org.waycontrol.GnomeShell1")]
@@ -350,7 +351,9 @@ mod tests {
         }
 
         fn list_windows(&self) -> String {
-            r#"[{"id":"gnome:42","title":"Terminal","app_id":"org.example.Terminal","workspace_id":"gnome:0","monitor":"0","fullscreen":false,"focused":true}]"#.into()
+            self.0.lock().unwrap().windows_json.clone().unwrap_or_else(|| {
+                r#"[{"id":"gnome:42","title":"Terminal","app_id":"org.example.Terminal","workspace_id":"gnome:0","monitor":"0","fullscreen":false,"focused":true}]"#.into()
+            })
         }
 
         fn switch_workspace(&self, id: &str) -> bool {
@@ -398,6 +401,7 @@ mod tests {
             version,
             calls: Vec::new(),
             workspaces_json: None,
+            windows_json: None,
         }));
         let service = zbus::connection::Builder::session()
             .unwrap()
@@ -432,6 +436,15 @@ mod tests {
         let _lock = DBUS_TEST_LOCK.lock().await;
         let (_service, state) = mock_service(INTERFACE_VERSION).await;
         state.lock().unwrap().workspaces_json = Some("not-json".into());
+        let client = Connection::session().await.unwrap();
+        assert!(GnomeAdapter::from_connection(client).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn negotiation_rejects_bridge_with_invalid_live_window_data() {
+        let _lock = DBUS_TEST_LOCK.lock().await;
+        let (_service, state) = mock_service(INTERFACE_VERSION).await;
+        state.lock().unwrap().windows_json = Some("not-json".into());
         let client = Connection::session().await.unwrap();
         assert!(GnomeAdapter::from_connection(client).await.is_err());
     }
