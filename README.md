@@ -43,7 +43,7 @@ The debug APK is written to `android/app/build/outputs/apk/debug/app-debug.apk`.
 
 ## Run the Linux companion
 
-On Arch Linux, build and install the local x86_64 package with `./packaging/arch/build-package.sh --syncdeps --install`, then enable the user service with `systemctl --user enable --now waycontrol.service`. A prebuilt package is available at [outputs/WayControl-v0.1.0-1-x86_64.pkg.tar.zst](outputs/WayControl-v0.1.0-1-x86_64.pkg.tar.zst). The package build and manual setup are documented in [Arch installation and pairing](docs/INSTALL_ARCH.md).
+On Arch Linux, build and install the local x86_64 package with `./packaging/arch/build-package.sh --syncdeps --install`, then enable the user service with `systemctl --user enable --now waycontrol.service`. The package build and manual setup are documented in [Arch installation and pairing](docs/INSTALL_ARCH.md).
 
 Build and install `target/release/waycontrold` to `~/.local/bin/waycontrold`, then install the user service:
 
